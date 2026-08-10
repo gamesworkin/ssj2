@@ -124,7 +124,9 @@
           <div><label id="lancPesoLbl">Peso (kg)</label><input type="number" step="0.001" min="0" id="lancPeso" required /></div>
           <div><label id="lancPrecoLbl">Preço por kg (R$)</label><input type="number" step="0.01" min="0" id="lancPreco" required /></div>
           <div><label>Fornecedor / Cliente</label><input type="text" id="lancPessoa" placeholder="Opcional" /></div>
+          <div><label>Conta / caixa</label><select id="lancConta"></select></div>
           <div class="full"><label>Observação</label><input type="text" id="lancObs" placeholder="Opcional" /></div>
+
           <div class="full row gap">
             <span class="total-preview" id="lancTotal">Total: R$ 0,00</span>
             <button type="submit" class="btn primary">Salvar lançamento</button>
@@ -142,8 +144,9 @@
         </div>
 
         <div class="table-wrap"><table id="tblLanc"><thead><tr>
-          <th>Data/Hora</th><th>Tipo</th><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Pessoa</th><th>Obs</th><th></th>
+          <th>Data/Hora</th><th>Tipo</th><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Pessoa</th><th>Conta</th><th>Obs</th><th></th>
         </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+
       </section>
 
       <!-- ESTOQUE -->
@@ -420,7 +423,21 @@
         <div class="table-wrap"><table id="tblFinCat"><thead><tr>
           <th>Categoria</th><th>Entradas</th><th>Saídas</th><th>Saldo</th>
         </tr></thead><tbody></tbody></table></div>
+
+        <h3 class="sub">Relatórios financeiros em PDF</h3>
+        <div class="panel filters">
+          <div><label>Período</label><select id="relTipo">
+            <option value="dia">Diário</option><option value="mes" selected>Mensal</option><option value="ano">Anual</option>
+          </select></div>
+          <div id="relCampoDia" class="hidden"><label>Dia</label><input type="date" id="relDia" /></div>
+          <div id="relCampoMes"><label>Mês</label><input type="month" id="relMes" /></div>
+          <div id="relCampoAno" class="hidden"><label>Ano</label><input type="number" id="relAno" min="2000" max="2100" step="1" /></div>
+          <div><label>Conta</label><select id="relConta"><option value="">Todas</option></select></div>
+          <div class="row gap end"><button class="btn primary" id="relPdf">Imprimir / salvar PDF</button></div>
+        </div>
       </section>
+
+
 
     </main>
   </div>

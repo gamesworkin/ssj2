@@ -338,10 +338,12 @@ $("#lancForm").addEventListener("submit", async (e) => {
     preco: num($("#lancPreco").value),
     total: num($("#lancPeso").value) * num($("#lancPreco").value),
     pessoa: $("#lancPessoa").value.trim(),
+    contaId: $("#lancConta").value || contaPadraoId(),
     obs: $("#lancObs").value.trim(),
     criadoEm: Date.now(),
   };
   if (!l.produtoId) return toast("Cadastre um produto primeiro.", true);
+  if (!l.contaId) return toast("Cadastre uma conta/caixa no Financeiro antes de lançar.", true);
   if (state.editLanc) await update(ref(db, "lancamentos/" + state.editLanc), l);
   else await push(ref(db, "lancamentos"), l);
   state.editLanc = null;
@@ -350,7 +352,8 @@ $("#lancForm").addEventListener("submit", async (e) => {
   calcTotal();
   toast("Lançamento salvo.");
 });
-$("#lancCancel").onclick = () => { state.editLanc = null; $("#lancForm").reset(); $("#lancData").value = toInputDT(new Date()); };
+$("#lancCancel").onclick = () => { state.editLanc = null; $("#lancForm").reset(); $("#lancData").value = toInputDT(new Date()); fillContaSelects(); };
+
 
 ["#fDe", "#fAte", "#fProduto", "#fTipo", "#fBusca"].forEach((s) => {
   $(s).addEventListener("input", renderLancamentos);
@@ -380,12 +383,12 @@ function aplicaFiltros(arr) {
 function renderLancamentos() {
   const rows = aplicaFiltros(lancArray());
   const tb = $("#tblLanc tbody"); tb.innerHTML = "";
-  if (!rows.length) { tb.innerHTML = `<tr><td colspan="9" class="empty">Nenhum lançamento no filtro.</td></tr>`; $("#tblLanc tfoot").innerHTML = ""; return; }
+  if (!rows.length) { tb.innerHTML = `<tr><td colspan="10" class="empty">Nenhum lançamento no filtro.</td></tr>`; $("#tblLanc tfoot").innerHTML = ""; return; }
   for (const l of rows) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${dtLocal(l.data)}</td><td><span class="tag ${l.tipo}">${l.tipo}</span></td>
       <td>${l.produtoNome || prodNome(l.produtoId)}</td><td>${qtd(l.peso, unidDe(l))}</td><td>${money(l.preco)}</td>
-      <td>${money(l.total)}</td><td>${l.pessoa || "-"}</td><td>${l.obs || "-"}</td>
+      <td>${money(l.total)}</td><td>${l.pessoa || "-"}</td><td>${contaNome(l.contaId || contaPadraoId())}</td><td>${l.obs || "-"}</td>
       <td><button class="btn mini" data-e="${l.id}">Editar</button>
           <button class="btn mini danger" data-d="${l.id}">Excluir</button></td>`;
     tb.appendChild(tr);
@@ -395,15 +398,17 @@ function renderLancamentos() {
   const tC = rows.filter((l) => l.tipo === "compra").reduce((s, l) => s + num(l.total), 0);
   const tV = rows.filter((l) => l.tipo === "venda").reduce((s, l) => s + num(l.total), 0);
   $("#tblLanc tfoot").innerHTML = `<tr><td colspan="3">${rows.length} registro(s)</td><td>${dual(tPeso, tUn)}</td>
-    <td>Compras</td><td>${money(tC)}</td><td>Vendas</td><td colspan="2">${money(tV)}</td></tr>`;
+    <td>Compras</td><td>${money(tC)}</td><td>Vendas</td><td colspan="3">${money(tV)}</td></tr>`;
 
   tb.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => {
     const l = state.lancamentos[b.dataset.e]; state.editLanc = b.dataset.e;
     $("#lancData").value = toInputDT(new Date(l.data)); $("#lancTipo").value = l.tipo;
     $("#lancProduto").value = l.produtoId; rotulosLanc(); $("#lancPeso").value = l.peso;
     $("#lancPreco").value = l.preco; $("#lancPessoa").value = l.pessoa || ""; $("#lancObs").value = l.obs || "";
+    $("#lancConta").value = l.contaId && state.contas[l.contaId] ? l.contaId : contaPadraoId();
     calcTotal(); window.scrollTo({ top: 0, behavior: "smooth" });
   }));
+
   tb.querySelectorAll("[data-d]").forEach((b) => (b.onclick = async () => {
     if (!guard() || !confirm("Excluir lançamento?")) return;
     await remove(ref(db, "lancamentos/" + b.dataset.d)); toast("Lançamento excluído.");
@@ -826,22 +831,25 @@ function contaNome(id) { return state.contas[id] ? state.contas[id].nome : (id ?
 function fillContaSelects() {
   const opts = contasArray().map((c) => `<option value="${c.id}">${c.nome}</option>`).join("");
   const padrao = contaPadraoId();
-  ["#finConta", "#finTrDe", "#finTrPara", "#cxConta"].forEach((sel) => {
+  ["#finConta", "#finTrDe", "#finTrPara", "#cxConta", "#lancConta"].forEach((sel) => {
     const el = $(sel); if (!el) return;
     const atual = el.value;
     el.innerHTML = opts;
     if (atual && state.contas[atual]) el.value = atual;
-    else if ((sel === "#finConta" || sel === "#cxConta") && padrao) el.value = padrao;
+    else if ((sel === "#finConta" || sel === "#cxConta" || sel === "#lancConta") && padrao) el.value = padrao;
   });
   const lista = contasArray();
   if (lista.length > 1 && $("#finTrPara").value === $("#finTrDe").value) {
     $("#finTrPara").value = lista.find((c) => c.id !== $("#finTrDe").value).id;
   }
-  const f = $("#finFConta");
-  const atualF = f.value;
-  f.innerHTML = `<option value="">Todas</option>` + opts;
-  if (atualF && state.contas[atualF]) f.value = atualF;
+  ["#finFConta", "#relConta"].forEach((sel) => {
+    const f = $(sel); if (!f) return;
+    const atualF = f.value;
+    f.innerHTML = `<option value="">Todas</option>` + opts;
+    if (atualF && state.contas[atualF]) f.value = atualF;
+  });
 }
+
 
 $("#finContaForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1124,3 +1132,132 @@ $("#finCsv").onclick = () => {
   ]));
   baixar(csv(rows), `financeiro-${Date.now()}.csv`, "text/csv");
 };
+
+/* --------------------- relatórios financeiros em PDF ---------------------- */
+(function relatoriosPDF() {
+  const elTipo = $("#relTipo");
+  if (!elTipo) return;
+  const hoje = new Date();
+  $("#relDia").value = hoje.toISOString().slice(0, 10);
+  $("#relMes").value = hoje.toISOString().slice(0, 7);
+  $("#relAno").value = hoje.getFullYear();
+
+  function alternaCampos() {
+    const t = elTipo.value;
+    $("#relCampoDia").classList.toggle("hidden", t !== "dia");
+    $("#relCampoMes").classList.toggle("hidden", t !== "mes");
+    $("#relCampoAno").classList.toggle("hidden", t !== "ano");
+  }
+  elTipo.onchange = alternaCampos;
+  alternaCampos();
+
+  const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+    "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
+  function periodo() {
+    const t = elTipo.value;
+    if (t === "dia") {
+      const d = $("#relDia").value || new Date().toISOString().slice(0, 10);
+      return { pref: d, titulo: "Relatório financeiro diário", label: d.split("-").reverse().join("/") };
+    }
+    if (t === "ano") {
+      const a = String($("#relAno").value || new Date().getFullYear());
+      return { pref: a, titulo: "Relatório financeiro anual", label: a };
+    }
+    const m = $("#relMes").value || new Date().toISOString().slice(0, 7);
+    const [ano, mes] = m.split("-");
+    return { pref: m, titulo: "Relatório financeiro mensal", label: `${MESES[Number(mes) - 1]} de ${ano}` };
+  }
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+  $("#relPdf").onclick = () => {
+    const p = periodo();
+    const contaFiltro = $("#relConta").value;
+    const movs = movimentosTodos()
+      .filter((m) => String(dayKey(m.data)).startsWith(p.pref))
+      .filter((m) => !contaFiltro || m.contaId === contaFiltro)
+      .sort((a, b) => new Date(a.data) - new Date(b.data));
+
+    const pagos = movs.filter(movPago);
+    const ent = pagos.filter((m) => m.tipo === "entrada").reduce((s, m) => s + num(m.valor), 0);
+    const sai = pagos.filter((m) => m.tipo === "saida").reduce((s, m) => s + num(m.valor), 0);
+    const pendE = movs.filter((m) => !movPago(m) && m.tipo === "entrada").reduce((s, m) => s + num(m.valor), 0);
+    const pendS = movs.filter((m) => !movPago(m) && m.tipo === "saida").reduce((s, m) => s + num(m.valor), 0);
+
+    const porConta = {};
+    pagos.forEach((m) => {
+      const k = contaNome(m.contaId);
+      const o = (porConta[k] = porConta[k] || { e: 0, s: 0 });
+      if (m.tipo === "entrada") o.e += num(m.valor); else o.s += num(m.valor);
+    });
+    const porCat = {};
+    pagos.forEach((m) => {
+      const k = m.categoria || "Sem categoria";
+      const o = (porCat[k] = porCat[k] || { e: 0, s: 0 });
+      if (m.tipo === "entrada") o.e += num(m.valor); else o.s += num(m.valor);
+    });
+
+    const linhas = movs.map((m) => `<tr>
+      <td>${esc(dtLocal(m.data))}</td><td>${esc(m.desc || "-")}${movPago(m) ? "" : " (pendente)"}</td>
+      <td>${esc(m.categoria || "-")}</td><td>${esc(contaNome(m.contaId))}</td>
+      <td class="r">${m.tipo === "entrada" ? money(m.valor) : "-"}</td>
+      <td class="r">${m.tipo === "saida" ? money(m.valor) : "-"}</td></tr>`).join("");
+
+    const tabela = (obj, titulo) => `<h3>${titulo}</h3><table><thead><tr>
+      <th>${titulo.includes("conta") ? "Conta" : "Categoria"}</th><th class="r">Entradas</th><th class="r">Saídas</th><th class="r">Saldo</th>
+      </tr></thead><tbody>${Object.keys(obj).sort().map((k) => `<tr><td>${esc(k)}</td>
+      <td class="r">${money(obj[k].e)}</td><td class="r">${money(obj[k].s)}</td>
+      <td class="r"><strong>${money(obj[k].e - obj[k].s)}</strong></td></tr>`).join("")
+      || `<tr><td colspan="4">Sem dados no período.</td></tr>`}</tbody></table>`;
+
+    const empresa = (state.ui && state.ui.brand) || "Relatório financeiro";
+
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
+<title>${esc(p.titulo)} — ${esc(p.label)}</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 12px; margin: 0; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  h2 { font-size: 13px; font-weight: normal; color: #555; margin: 0 0 14px; }
+  h3 { font-size: 13px; margin: 18px 0 6px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  th, td { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; font-size: 11px; }
+  td.r, th.r { text-align: right; white-space: nowrap; }
+  .kpis { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+  .kpi { border: 1px solid #ddd; border-radius: 6px; padding: 6px 10px; min-width: 120px; }
+  .kpi span { display: block; color: #666; font-size: 10px; text-transform: uppercase; }
+  .kpi strong { font-size: 14px; }
+  tfoot td { font-weight: bold; background: #f8f8f8; }
+  .rodape { margin-top: 16px; color: #777; font-size: 10px; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+</style></head><body>
+<h1>${esc(empresa)}</h1>
+<h2>${esc(p.titulo)} — ${esc(p.label)}${contaFiltro ? " — conta: " + esc(contaNome(contaFiltro)) : " — todas as contas"}</h2>
+<div class="kpis">
+  <div class="kpi"><span>Entradas</span><strong>${money(ent)}</strong></div>
+  <div class="kpi"><span>Saídas</span><strong>${money(sai)}</strong></div>
+  <div class="kpi"><span>Resultado</span><strong>${money(ent - sai)}</strong></div>
+  <div class="kpi"><span>A receber</span><strong>${money(pendE)}</strong></div>
+  <div class="kpi"><span>A pagar</span><strong>${money(pendS)}</strong></div>
+  <div class="kpi"><span>Movimentos</span><strong>${movs.length}</strong></div>
+</div>
+${tabela(porConta, "Resumo por conta")}
+${tabela(porCat, "Resumo por categoria")}
+<h3>Extrato do período</h3>
+<table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th class="r">Entrada</th><th class="r">Saída</th></tr></thead>
+<tbody>${linhas || `<tr><td colspan="6">Nenhum movimento no período.</td></tr>`}</tbody>
+<tfoot><tr><td colspan="4">Totais (pagos)</td><td class="r">${money(ent)}</td><td class="r">${money(sai)}</td></tr></tfoot></table>
+<p class="rodape">Emitido em ${esc(dtLocal(new Date().toISOString()))}</p>
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) return toast("Permita pop-ups para gerar o relatório.", true);
+    w.document.open(); w.document.write(html); w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 400);
+  };
+})();
