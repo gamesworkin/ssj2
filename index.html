@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Sistema Gerencial Sucata São José</title>
+<meta name="description" content="Sistema gerencial para lançamentos diários de compra de materiais recicláveis, estoque e relatórios." />
+<link rel="icon" href="fav.ico" type="image/x-icon" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ================= LOGIN ================= -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-box">
+    <div class="logo-slot" id="logoSlot">
+      <img id="logoImg" src="logo.png" alt="Logo da empresa" width="128" height="128"
+           onerror="this.style.display='none';document.getElementById('logoFallback').style.display='flex'" />
+      <div id="logoFallback" class="logo-fallback">LOGO<br><small>128x128</small></div>
+    </div>
+
+    <h1 id="loginTitle">Sucata São José</h1>
+    <p id="loginSubtitle" class="muted">Entre com suas credenciais</p>
+
+    <form id="loginForm" autocomplete="on">
+      <label for="email">E-mail</label>
+      <input type="email" id="email" placeholder="e-mail@provedor.com" required />
+      <label for="password">Senha</label>
+      <div class="pw-wrap">
+        <input type="password" id="password" placeholder="••••••••" required />
+        <button type="button" class="pw-toggle" id="pwToggle" aria-label="Mostrar senha">👁</button>
+      </div>
+      <button type="submit" class="btn primary block" id="loginBtn">Entrar</button>
+    </form>
+
+    <button class="link" id="forgotBtn">Esqueci minha senha</button>
+    <div id="loginMsg" class="msg"></div>
+  </div>
+
+  <button class="theme-fab" id="themeFabLogin" title="Alternar tema">🌗</button>
+</div>
+
+<!-- ============== RECUPERAÇÃO DE SENHA ============== -->
+<div class="modal-backdrop" id="resetModal">
+  <div class="modal">
+    <h2>Recuperar senha</h2>
+    <p class="muted">Informe o e-mail cadastrado. Enviaremos um link de redefinição.</p>
+    <form id="resetForm">
+      <input type="email" id="resetEmail" placeholder="seu@email.com" required />
+      <div class="row gap">
+        <button type="submit" class="btn primary">Enviar link</button>
+        <button type="button" class="btn ghost" data-close="resetModal">Cancelar</button>
+      </div>
+    </form>
+    <div id="resetMsg" class="msg"></div>
+  </div>
+</div>
+
+<!-- ============== LOADER ============== -->
+<div id="loader" class="loader-overlay">
+  <div class="spinner"></div>
+  <p id="loaderText">Carregando sistema...</p>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <button class="icon-btn" id="menuBtn" aria-label="Menu">☰</button>
+    <div class="brand">
+      <img id="brandLogo" src="/logo.png" alt="" onerror="this.remove()" />
+      <span id="brandName">Sistema Reciclagem</span>
+    </div>
+    <div class="topbar-right">
+      <span id="clock" class="clock"></span>
+      <button class="icon-btn" id="themeBtn" title="Alternar tema">🌗</button>
+      <button class="icon-btn" id="logoutBtn" title="Sair">⎋</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" id="sidebar">
+      <button class="nav-item active" data-view="dashboard">📊 <span>Painel</span></button>
+      <button class="nav-item" data-view="lancamentos">🧾 <span>Lançamentos</span></button>
+      <button class="nav-item" data-view="estoque">📦 <span>Estoque</span></button>
+      <button class="nav-item" data-view="produtos">🏷️ <span>Produtos</span></button>
+      <button class="nav-item" data-view="relatorios">📈 <span>Relatórios</span></button>
+      <button class="nav-item" data-view="dados">💾 <span>Import/Export</span></button>
+      <button class="nav-item" data-view="admin">⚙️ <span>Interface</span></button>
+      <button class="nav-item" data-view="caixa">🛒 <span>Compra/Venda</span></button>
+      <button class="nav-item" data-view="financeiro">💰 <span>Financeiro</span></button>
+      <div class="sidebar-foot"><span id="userBadge"></span></div>
+    </nav>
+    <div class="backdrop" id="sidebarBackdrop"></div>
+
+    <main class="content">
+
+      <!-- DASHBOARD -->
+      <section class="view" id="view-dashboard">
+        <h2 class="view-title">Painel</h2>
+        <div class="cards">
+          <div class="card"><span class="card-label">Compras hoje (qtd.)</span><strong id="kpiKgHoje">0</strong></div>
+          <div class="card"><span class="card-label">Gasto hoje</span><strong id="kpiGastoHoje">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Vendas hoje</span><strong id="kpiVendaHoje">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Lucro previsto hoje</span><strong id="kpiLucroHoje">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Estoque total</span><strong id="kpiEstoque">0</strong></div>
+          <div class="card"><span class="card-label">Valor de estoque</span><strong id="kpiEstoqueValor">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Saldo em caixa</span><strong id="kpiCaixa">R$ 0,00</strong></div>
+        </div>
+        <h3 class="sub">Últimos lançamentos</h3>
+        <div class="table-wrap"><table id="tblUltimos"><thead><tr>
+          <th>Data/Hora</th><th>Produto</th><th>Tipo</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <!-- LANÇAMENTOS -->
+      <section class="view hidden" id="view-lancamentos">
+        <h2 class="view-title">Lançamentos diários</h2>
+        <form id="lancForm" class="panel grid-form">
+          <div><label>Data e hora</label><input type="datetime-local" id="lancData" required /></div>
+          <div><label>Tipo</label><select id="lancTipo">
+            <option value="compra">Compra</option><option value="venda">Venda</option>
+          </select></div>
+          <div><label>Produto</label><select id="lancProduto" required></select></div>
+          <div><label id="lancPesoLbl">Peso (kg)</label><input type="number" step="0.001" min="0" id="lancPeso" required /></div>
+          <div><label id="lancPrecoLbl">Preço por kg (R$)</label><input type="number" step="0.01" min="0" id="lancPreco" required /></div>
+          <div><label>Fornecedor / Cliente</label><input type="text" id="lancPessoa" placeholder="Opcional" /></div>
+          <div class="full"><label>Observação</label><input type="text" id="lancObs" placeholder="Opcional" /></div>
+          <div class="full row gap">
+            <span class="total-preview" id="lancTotal">Total: R$ 0,00</span>
+            <button type="submit" class="btn primary">Salvar lançamento</button>
+            <button type="button" class="btn ghost" id="lancCancel">Cancelar edição</button>
+          </div>
+        </form>
+
+        <div class="panel filters">
+          <div><label>De</label><input type="date" id="fDe" /></div>
+          <div><label>Até</label><input type="date" id="fAte" /></div>
+          <div><label>Produto</label><select id="fProduto"><option value="">Todos</option></select></div>
+          <div><label>Tipo</label><select id="fTipo"><option value="">Todos</option><option value="compra">Compra</option><option value="venda">Venda</option></select></div>
+          <div><label>Buscar</label><input type="text" id="fBusca" placeholder="Fornecedor, obs..." /></div>
+          <div class="row gap end"><button class="btn" id="fLimpar">Limpar</button></div>
+        </div>
+
+        <div class="table-wrap"><table id="tblLanc"><thead><tr>
+          <th>Data/Hora</th><th>Tipo</th><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Pessoa</th><th>Obs</th><th></th>
+        </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+      </section>
+
+      <!-- ESTOQUE -->
+      <section class="view hidden" id="view-estoque">
+        <h2 class="view-title">Estoque</h2>
+        <form id="ajusteForm" class="panel grid-form">
+          <div><label>Produto</label><select id="ajProduto" required></select></div>
+          <div><label>Tipo de ajuste</label><select id="ajTipo">
+            <option value="inicial">Saldo inicial (pré-sistema)</option>
+            <option value="entrada">Entrada manual</option>
+            <option value="saida">Saída / perda</option>
+          </select></div>
+          <div><label id="ajPesoLbl">Peso (kg)</label><input type="number" step="0.001" min="0" id="ajPeso" required /></div>
+          <div><label id="ajCustoLbl">Custo médio por kg (R$)</label><input type="number" step="0.01" min="0" id="ajCusto" /></div>
+          <div class="full"><label>Observação</label><input type="text" id="ajObs" /></div>
+          <div class="full"><button class="btn primary" type="submit">Registrar ajuste</button></div>
+        </form>
+
+        <div class="table-wrap"><table id="tblEstoque"><thead><tr>
+          <th>Produto</th><th>Unid.</th><th>Inicial</th><th>Comprado</th><th>Vendido</th><th>Ajustes</th><th>Saldo</th><th>Valor estimado</th>
+        </tr></thead><tbody></tbody></table></div>
+
+        <h3 class="sub">Histórico de ajustes</h3>
+        <div class="table-wrap"><table id="tblAjustes"><thead><tr>
+          <th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd.</th><th>Custo unit.</th><th>Obs</th><th></th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <!-- PRODUTOS -->
+      <section class="view hidden" id="view-produtos">
+        <h2 class="view-title">Produtos</h2>
+        <form id="prodForm" class="panel grid-form">
+          <div><label>Nome</label><input type="text" id="prodNome" required /></div>
+          <div><label>Categoria</label><input type="text" id="prodCat" placeholder="Metais, Papel..." /></div>
+          <div><label>Unidade de medida</label><select id="prodUnid">
+            <option value="kg">Peso (kg)</option><option value="un">Unidade (un)</option>
+          </select></div>
+          <div><label>Preço compra padrão</label><input type="number" step="0.01" min="0" id="prodCompra" /></div>
+          <div><label>Preço venda padrão</label><input type="number" step="0.01" min="0" id="prodVenda" /></div>
+          <div class="full row gap">
+            <button class="btn primary" type="submit">Salvar produto</button>
+            <button class="btn ghost" type="button" id="prodCancel">Cancelar edição</button>
+          </div>
+        </form>
+        <div class="table-wrap"><table id="tblProdutos"><thead><tr>
+          <th>Nome</th><th>Categoria</th><th>Unid.</th><th>Compra</th><th>Venda</th><th>Margem</th><th></th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <!-- RELATÓRIOS -->
+      <section class="view hidden" id="view-relatorios">
+        <h2 class="view-title">Relatórios</h2>
+        <div class="panel filters">
+          <div><label>Período</label><select id="relTipo">
+            <option value="diario">Diário</option><option value="mensal">Mensal</option><option value="anual">Anual</option>
+          </select></div>
+          <div><label>Referência</label><input type="date" id="relRef" /></div>
+          <div class="row gap end">
+            <button class="btn" id="relGerar">Gerar</button>
+                        <button class="btn ghost" id="relCsv">Exportar CSV</button>
+            <button class="btn ghost" id="relPrint">Imprimir / PDF</button>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="card"><span class="card-label">Comprado (qtd.)</span><strong id="relKgC">0</strong></div>
+          <div class="card"><span class="card-label">Vendido (qtd.)</span><strong id="relKgV">0</strong></div>
+          <div class="card"><span class="card-label">Total compras</span><strong id="relTotC">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Total vendas</span><strong id="relTotV">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Resultado</span><strong id="relResult">R$ 0,00</strong></div>
+        </div>
+        <div class="table-wrap"><table id="tblRel"><thead><tr>
+          <th>Produto</th><th>Qtd. compra</th><th>R$ compra</th><th>Qtd. venda</th><th>R$ venda</th><th>Resultado</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <!-- IMPORT / EXPORT -->
+      <section class="view hidden" id="view-dados">
+        <h2 class="view-title">Importação e exportação</h2>
+        <div class="panel">
+          <h3 class="sub">Exportar</h3>
+          <div class="filters">
+            <div><label>Escopo</label><select id="expEscopo">
+              <option value="full">Banco completo</option>
+              <option value="periodo">Somente período</option>
+            </select></div>
+            <div><label>De</label><input type="date" id="expDe" /></div>
+            <div><label>Até</label><input type="date" id="expAte" /></div>
+            <div class="row gap end">
+              <button class="btn primary" id="expJson">Exportar JSON</button>
+              <button class="btn ghost" id="expCsv">Exportar CSV</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3 class="sub">Importar</h3>
+          <p class="muted">Aceita arquivos JSON gerados por este sistema.</p>
+          <div class="filters">
+            <div><label>Arquivo</label><input type="file" id="impFile" accept="application/json" /></div>
+            <div><label>Modo</label><select id="impModo">
+              <option value="merge">Mesclar (mantém existentes)</option>
+              <option value="replace">Substituir tudo</option>
+            </select></div>
+            <div class="row gap end"><button class="btn primary" id="impBtn">Importar</button></div>
+          </div>
+          <div id="impMsg" class="msg"></div>
+        </div>
+      </section>
+
+      <!-- ADMIN INTERFACE -->
+      <section class="view hidden" id="view-admin">
+        <h2 class="view-title">Editor de interface</h2>
+        <form id="uiForm" class="panel grid-form">
+          <div><label>Nome do sistema</label><input type="text" id="uiBrand" /></div>
+          <div><label>Título da tela de login</label><input type="text" id="uiLoginTitle" /></div>
+          <div><label>Subtítulo do login</label><input type="text" id="uiLoginSubtitle" /></div>
+          <div><label>URL da logo (128x128)</label><input type="text" id="uiLogo" placeholder="/logo.png" /></div>
+          <div><label>Cor primária</label><input type="color" id="uiPrimary" /></div>
+          <div><label>Cor de destaque</label><input type="color" id="uiAccent" /></div>
+          <div><label>Raio das bordas (px)</label><input type="number" id="uiRadius" min="0" max="28" /></div>
+          <div><label>Tamanho da fonte base (px)</label><input type="number" id="uiFont" min="12" max="20" /></div>
+          <div><label>Tema padrão</label><select id="uiTheme"><option value="dark">Escuro</option><option value="light">Claro</option></select></div>
+          <div><label>Moeda</label><input type="text" id="uiMoeda" placeholder="R$" /></div>
+          <div class="full"><label>Rótulos do menu (separados por vírgula)</label>
+            <input type="text" id="uiMenu" placeholder="Painel,Lançamentos,Estoque,Produtos,Relatórios,Import/Export,Interface,Compra/Venda,Financeiro" /></div>
+          <div class="full row gap">
+            <button class="btn primary" type="submit">Salvar interface</button>
+            <button class="btn ghost" type="button" id="uiReset">Restaurar padrão</button>
+          </div>
+        </form>
+      </section>
+
+
+      <!-- COMPRA / VENDA (CARRINHO) -->
+      <section class="view hidden" id="view-caixa">
+        <h2 class="view-title">Compra / Venda</h2>
+
+        <form id="cxCabForm" class="panel grid-form" onsubmit="return false">
+          <div><label>Data e hora</label><input type="datetime-local" id="cxData" /></div>
+          <div><label>Tipo da operação</label><select id="cxTipo">
+            <option value="compra">Compra</option><option value="venda">Venda</option>
+          </select></div>
+          <div><label>Fornecedor / Cliente</label><input type="text" id="cxPessoa" placeholder="Opcional" /></div>
+          <div class="full"><label>Observação da operação</label><input type="text" id="cxObs" placeholder="Opcional" /></div>
+        </form>
+
+        <h3 class="sub">Adicionar item</h3>
+        <form id="cxItemForm" class="panel grid-form">
+          <div><label>Produto</label><select id="cxProduto" required></select></div>
+          <div><label id="cxQtdLbl">Peso (kg)</label><input type="number" step="0.001" min="0" id="cxQtd" required /></div>
+          <div><label id="cxPrecoLbl">Preço por kg (R$)</label><input type="number" step="0.01" min="0" id="cxPreco" required /></div>
+          <div><label>Observação do item</label><input type="text" id="cxItemObs" placeholder="Opcional" /></div>
+          <div class="full row gap">
+            <span class="total-preview" id="cxSubtotal">Subtotal: R$ 0,00</span>
+            <button type="submit" class="btn primary">Adicionar ao carrinho</button>
+          </div>
+        </form>
+
+        <h3 class="sub">Itens da operação</h3>
+        <div class="table-wrap"><table id="tblCaixa"><thead><tr>
+          <th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Subtotal</th><th>Obs</th><th></th>
+        </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+
+        <div class="panel">
+          <div class="cards">
+            <div class="card"><span class="card-label">Total em peso</span><strong id="cxTotKg">0</strong></div>
+            <div class="card"><span class="card-label">Total em unidades</span><strong id="cxTotUn">0</strong></div>
+            <div class="card"><span class="card-label">Itens</span><strong id="cxTotItens">0</strong></div>
+            <div class="card"><span class="card-label">Valor total</span><strong id="cxTotValor">R$ 0,00</strong></div>
+          </div>
+          <div class="row gap" style="margin-top:1rem">
+            <button class="btn primary" id="cxFinalizar">Finalizar e lançar</button>
+            <button class="btn ghost" id="cxLimpar">Limpar carrinho</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- FINANCEIRO -->
+      <section class="view hidden" id="view-financeiro">
+        <h2 class="view-title">Financeiro</h2>
+
+        <div class="cards">
+          <div class="card"><span class="card-label">Saldo em caixa (todas as contas)</span><strong id="finSaldoTotal">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Entradas do mês</span><strong id="finEntradasMes">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Saídas do mês</span><strong id="finSaidasMes">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Resultado do mês</span><strong id="finResultadoMes">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">Contas a pagar (pendente)</span><strong id="finAPagar">R$ 0,00</strong></div>
+          <div class="card"><span class="card-label">A receber (pendente)</span><strong id="finAReceber">R$ 0,00</strong></div>
+        </div>
+
+        <h3 class="sub">Contas / Caixas</h3>
+        <form id="finContaForm" class="panel grid-form">
+          <div><label>Nome da conta</label><input type="text" id="finContaNome" placeholder="Caixa da loja, Banco X..." required /></div>
+          <div><label>Tipo</label><select id="finContaTipo">
+            <option value="caixa">Caixa (dinheiro)</option>
+            <option value="banco">Conta bancária</option>
+            <option value="digital">Carteira digital / PIX</option>
+          </select></div>
+          <div><label>Saldo inicial (R$)</label><input type="number" step="0.01" id="finContaSaldo" /></div>
+          <div><label>Conta padrão das operações</label><select id="finContaPadrao">
+            <option value="nao">Não</option><option value="sim">Sim</option>
+          </select></div>
+          <div class="full row gap">
+            <button class="btn primary" type="submit">Salvar conta</button>
+            <button class="btn ghost" type="button" id="finContaCancel">Cancelar edição</button>
+          </div>
+        </form>
+        <div class="table-wrap"><table id="tblFinContas"><thead><tr>
+          <th>Conta</th><th>Tipo</th><th>Padrão</th><th>Saldo inicial</th><th>Movimentado</th><th>Saldo atual</th><th></th>
+        </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+
+        <h3 class="sub">Novo movimento financeiro</h3>
+        <form id="finMovForm" class="panel grid-form">
+          <div><label>Data</label><input type="datetime-local" id="finData" required /></div>
+          <div><label>Natureza</label><select id="finTipo">
+            <option value="entrada">Entrada (recebimento)</option>
+            <option value="saida">Saída (pagamento)</option>
+          </select></div>
+          <div><label>Categoria</label><select id="finCategoria"></select></div>
+          <div><label>Conta</label><select id="finConta" required></select></div>
+          <div><label>Valor (R$)</label><input type="number" step="0.01" min="0" id="finValor" required /></div>
+          <div><label>Forma de pagamento</label><select id="finForma">
+            <option value="dinheiro">Dinheiro</option><option value="pix">PIX</option>
+            <option value="transferencia">Transferência</option><option value="cartao">Cartão</option>
+            <option value="boleto">Boleto</option><option value="cheque">Cheque</option>
+          </select></div>
+          <div><label>Vencimento</label><input type="date" id="finVenc" /></div>
+          <div><label>Situação</label><select id="finStatus">
+            <option value="pago">Pago / recebido</option>
+            <option value="pendente">Pendente</option>
+          </select></div>
+          <div><label>Pessoa / empresa</label><input type="text" id="finPessoa" placeholder="Opcional" /></div>
+          <div class="full"><label>Descrição</label><input type="text" id="finDesc" placeholder="Ex.: Conta de luz — julho" /></div>
+          <div class="full row gap">
+            <button class="btn primary" type="submit">Salvar movimento</button>
+            <button class="btn ghost" type="button" id="finMovCancel">Cancelar edição</button>
+          </div>
+        </form>
+
+        <h3 class="sub">Transferência entre contas</h3>
+        <form id="finTransfForm" class="panel grid-form">
+          <div><label>De</label><select id="finTrDe" required></select></div>
+          <div><label>Para</label><select id="finTrPara" required></select></div>
+          <div><label>Valor (R$)</label><input type="number" step="0.01" min="0" id="finTrValor" required /></div>
+          <div><label>Observação</label><input type="text" id="finTrObs" placeholder="Opcional" /></div>
+          <div class="full"><button class="btn primary" type="submit">Transferir</button></div>
+        </form>
+
+        <h3 class="sub">Contas a pagar / receber pendentes</h3>
+        <div class="table-wrap"><table id="tblFinPend"><thead><tr>
+          <th>Vencimento</th><th>Descrição</th><th>Categoria</th><th>Natureza</th><th>Valor</th><th>Conta</th><th></th>
+        </tr></thead><tbody></tbody></table></div>
+
+        <h3 class="sub">Extrato / movimentações</h3>
+        <div class="panel filters">
+          <div><label>De</label><input type="date" id="finFDe" /></div>
+          <div><label>Até</label><input type="date" id="finFAte" /></div>
+          <div><label>Conta</label><select id="finFConta"><option value="">Todas</option></select></div>
+          <div><label>Natureza</label><select id="finFTipo"><option value="">Todas</option><option value="entrada">Entradas</option><option value="saida">Saídas</option></select></div>
+          <div><label>Origem</label><select id="finFOrigem">
+            <option value="">Todas</option><option value="manual">Manuais</option><option value="operacional">Compras/Vendas</option>
+          </select></div>
+          <div><label>Buscar</label><input type="text" id="finFBusca" placeholder="Descrição, pessoa, categoria..." /></div>
+          <div class="row gap end">
+            <button class="btn" id="finFLimpar">Limpar</button>
+            <button class="btn ghost" id="finCsv">Exportar CSV</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table id="tblFinMov"><thead><tr>
+          <th>Data</th><th>Descrição</th><th>Categoria</th><th>Origem</th><th>Conta</th><th>Entrada</th><th>Saída</th><th>Saldo</th><th></th>
+        </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+
+        <h3 class="sub">Resumo por categoria (período filtrado)</h3>
+        <div class="table-wrap"><table id="tblFinCat"><thead><tr>
+          <th>Categoria</th><th>Entradas</th><th>Saídas</th><th>Saldo</th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
