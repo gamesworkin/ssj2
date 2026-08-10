@@ -742,6 +742,8 @@ $("#cxFinalizar").onclick = async () => {
   const tipo = $("#cxTipo").value;
   const pessoa = $("#cxPessoa").value.trim();
   const obsGeral = $("#cxObs").value.trim();
+  const contaId = ($("#cxConta") && $("#cxConta").value) || contaPadraoId();
+  if (!contaId) return toast("Cadastre uma conta/caixa no Financeiro antes de lançar.", true);
   const agora = Date.now();
   const opId = "op" + agora;
   try {
@@ -757,6 +759,7 @@ $("#cxFinalizar").onclick = async () => {
         preco: it.preco,
         total: it.total,
         pessoa,
+        contaId,
         obs: [obsGeral, it.obs].filter(Boolean).join(" | "),
         operacaoId: opId,
         criadoEm: agora,
@@ -823,12 +826,12 @@ function contaNome(id) { return state.contas[id] ? state.contas[id].nome : (id ?
 function fillContaSelects() {
   const opts = contasArray().map((c) => `<option value="${c.id}">${c.nome}</option>`).join("");
   const padrao = contaPadraoId();
-  ["#finConta", "#finTrDe", "#finTrPara"].forEach((sel) => {
+  ["#finConta", "#finTrDe", "#finTrPara", "#cxConta"].forEach((sel) => {
     const el = $(sel); if (!el) return;
     const atual = el.value;
     el.innerHTML = opts;
     if (atual && state.contas[atual]) el.value = atual;
-    else if (sel === "#finConta" && padrao) el.value = padrao;
+    else if ((sel === "#finConta" || sel === "#cxConta") && padrao) el.value = padrao;
   });
   const lista = contasArray();
   if (lista.length > 1 && $("#finTrPara").value === $("#finTrDe").value) {
