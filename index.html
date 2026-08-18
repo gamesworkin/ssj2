@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Sistema Gerencial Sucata São José</title>
+<link rel="manifest" href="manifest.json">
 <meta name="description" content="Sistema gerencial para lançamentos diários de compra de materiais recicláveis, estoque e relatórios." />
 <link rel="icon" href="fav.ico" type="image/x-icon" />
 <link rel="stylesheet" href="styles.css" />
@@ -147,6 +148,8 @@
           <th>Data/Hora</th><th>Tipo</th><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Pessoa</th><th>Conta</th><th>Obs</th><th></th>
         </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
 
+        <div class="pager" id="lancPager"></div>
+
       </section>
 
       <!-- ESTOQUE -->
@@ -204,6 +207,19 @@
             <option value="diario">Diário</option><option value="mensal">Mensal</option><option value="anual">Anual</option>
           </select></div>
           <div><label>Referência</label><input type="date" id="relRef" /></div>
+          <div><label>Movimentação</label><select id="relMovTipo">
+            <option value="">Compras e vendas</option>
+            <option value="compra">Somente compras</option>
+            <option value="venda">Somente vendas</option>
+          </select></div>
+          <div class="full">
+            <label>Produtos (marque um ou vários — vazio = todos)</label>
+            <div class="chk-list" id="relProdutos"></div>
+            <div class="row gap" style="margin-top:.5rem">
+              <button type="button" class="btn mini" id="relProdTodos">Marcar todos</button>
+              <button type="button" class="btn mini" id="relProdNenhum">Desmarcar todos</button>
+            </div>
+          </div>
           <div class="row gap end">
             <button class="btn" id="relGerar">Gerar</button>
                         <button class="btn ghost" id="relCsv">Exportar CSV</button>
@@ -283,6 +299,13 @@
       <section class="view hidden" id="view-caixa">
         <h2 class="view-title">Compra / Venda</h2>
 
+        <div class="tabs" id="cxTabs">
+          <button class="tab active" data-tab="real">Operação real</button>
+          <button class="tab" data-tab="sim">Simulador</button>
+        </div>
+
+        <div id="cxPaneReal">
+
         <form id="cxCabForm" class="panel grid-form" onsubmit="return false">
           <div><label>Data e hora</label><input type="datetime-local" id="cxData" /></div>
           <div><label>Tipo da operação</label><select id="cxTipo">
@@ -320,6 +343,57 @@
           <div class="row gap" style="margin-top:1rem">
             <button class="btn primary" id="cxFinalizar">Finalizar e lançar</button>
             <button class="btn ghost" id="cxLimpar">Limpar carrinho</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3 class="sub">Documentos</h3>
+          <div class="filters">
+            <div class="row gap"><button class="btn" id="cxRecibo">Imprimir recibo</button></div>
+            <div><label>Data do relatório</label><input type="date" id="cxRelData" /></div>
+            <div><label>Movimentações</label><select id="cxRelTipo">
+              <option value="">Compras e vendas</option>
+              <option value="compra">Somente compras</option>
+              <option value="venda">Somente vendas</option>
+            </select></div>
+            <div class="row gap end"><button class="btn" id="cxRelDia">Imprimir relatório do dia</button></div>
+          </div>
+          <p class="muted">O recibo usa os itens do carrinho atual ou a última operação finalizada.</p>
+        </div>
+        </div>
+
+        <div id="cxPaneSim" class="hidden">
+          <h3 class="sub">Simulador — nada é gravado no banco de dados</h3>
+          <form id="simItemForm" class="panel grid-form">
+            <div><label>Tipo da simulação</label><select id="simTipo">
+              <option value="compra">Compra</option><option value="venda">Venda</option>
+            </select></div>
+            <div><label>Produto</label><select id="simProduto" required></select></div>
+            <div><label id="simQtdLbl">Peso (kg)</label><input type="number" step="0.001" min="0" id="simQtd" required /></div>
+            <div><label id="simPrecoLbl">Preço por kg (R$)</label><input type="number" step="0.01" min="0" id="simPreco" required /></div>
+            <div><label id="simRefLbl">Preço de referência (R$)</label><input type="number" step="0.01" min="0" id="simRef" /></div>
+            <div class="full row gap">
+              <span class="total-preview" id="simSubtotal">Subtotal: R$ 0,00</span>
+              <button type="submit" class="btn primary">Adicionar à simulação</button>
+            </div>
+          </form>
+
+          <div class="table-wrap"><table id="tblSim"><thead><tr>
+            <th>Tipo</th><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Subtotal</th><th>Referência</th><th>Resultado estimado</th><th></th>
+          </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+
+          <div class="panel">
+            <div class="cards">
+              <div class="card"><span class="card-label">Compras simuladas</span><strong id="simTotC">R$ 0,00</strong></div>
+              <div class="card"><span class="card-label">Vendas simuladas</span><strong id="simTotV">R$ 0,00</strong></div>
+              <div class="card"><span class="card-label">Resultado estimado</span><strong id="simResult">R$ 0,00</strong></div>
+              <div class="card"><span class="card-label">Margem estimada</span><strong id="simMargem">0%</strong></div>
+            </div>
+            <div class="row gap" style="margin-top:1rem">
+              <button class="btn primary" id="simPrint">Imprimir simulação</button>
+              <button class="btn ghost" id="simLimpar">Limpar simulação</button>
+            </div>
+            <p class="muted" style="margin-top:.6rem">A simulação existe apenas nesta sessão do navegador; nenhum lançamento é criado.</p>
           </div>
         </div>
       </section>

@@ -291,7 +291,9 @@ function fillProductSelects() {
   $("#ajProduto").innerHTML = opts;
   $("#cxProduto").innerHTML = opts;
   $("#fProduto").innerHTML = `<option value="">Todos</option>` + opts;
-  rotulosLanc(); rotulosAjuste(); rotulosCaixa();
+  if ($("#simProduto")) $("#simProduto").innerHTML = opts;
+  fillRelProdutos();
+  rotulosLanc(); rotulosAjuste(); rotulosCaixa(); rotulosSim();
 }
 const prodNome = (id) => (state.produtos[id] ? state.produtos[id].nome : "(removido)");
 
@@ -356,10 +358,11 @@ $("#lancCancel").onclick = () => { state.editLanc = null; $("#lancForm").reset()
 
 
 ["#fDe", "#fAte", "#fProduto", "#fTipo", "#fBusca"].forEach((s) => {
-  $(s).addEventListener("input", renderLancamentos);
-  $(s).addEventListener("change", renderLancamentos);
+  const reset = () => { state.lancPage = 1; renderLancamentos(); };
+  $(s).addEventListener("input", reset);
+  $(s).addEventListener("change", reset);
 });
-$("#fLimpar").onclick = () => { ["#fDe", "#fAte", "#fBusca"].forEach((s) => ($(s).value = "")); $("#fProduto").value = ""; $("#fTipo").value = ""; renderLancamentos(); };
+$("#fLimpar").onclick = () => { ["#fDe", "#fAte", "#fBusca"].forEach((s) => ($(s).value = "")); $("#fProduto").value = ""; $("#fTipo").value = ""; state.lancPage = 1; renderLancamentos(); };
 
 function lancArray() {
   return Object.entries(state.lancamentos)
@@ -380,11 +383,52 @@ function aplicaFiltros(arr) {
     return true;
   });
 }
+const LANC_POR_PAGINA = 50;
+const LANC_PAGS_VISIVEIS = 5;
+state.lancPage = 1;
+
+function renderPagerLanc(total) {
+  const el = $("#lancPager");
+  if (!el) return;
+  const totalPag = Math.max(1, Math.ceil(total / LANC_POR_PAGINA));
+  if (!total) { el.innerHTML = ""; return; }
+  const cur = state.lancPage;
+  let ini = Math.max(1, cur - Math.floor(LANC_PAGS_VISIVEIS / 2));
+  let fim = Math.min(totalPag, ini + LANC_PAGS_VISIVEIS - 1);
+  ini = Math.max(1, fim - LANC_PAGS_VISIVEIS + 1);
+  const setas = totalPag > LANC_PAGS_VISIVEIS;
+  let html = `<span class="pager-info">Página ${cur} de ${totalPag} · ${total} movimentação(ões)</span><div class="pager-btns">`;
+  if (setas) html += `<button class="btn mini" data-pg="${cur - 1}" ${cur === 1 ? "disabled" : ""}>&lt;</button>`;
+  for (let pg = ini; pg <= fim; pg++) {
+    html += `<button class="btn mini ${pg === cur ? "primary" : ""}" data-pg="${pg}">${pg}</button>`;
+  }
+  if (setas) html += `<button class="btn mini" data-pg="${cur + 1}" ${cur === totalPag ? "disabled" : ""}>&gt;</button>`;
+  html += `</div>`;
+  el.innerHTML = html;
+  el.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => {
+    const pg = Number(b.dataset.pg);
+    if (pg < 1 || pg > totalPag || pg === state.lancPage) return;
+    state.lancPage = pg;
+    renderLancamentos();
+    $("#tblLanc").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+}
+
 function renderLancamentos() {
   const rows = aplicaFiltros(lancArray());
   const tb = $("#tblLanc tbody"); tb.innerHTML = "";
-  if (!rows.length) { tb.innerHTML = `<tr><td colspan="10" class="empty">Nenhum lançamento no filtro.</td></tr>`; $("#tblLanc tfoot").innerHTML = ""; return; }
-  for (const l of rows) {
+  const totalPag = Math.max(1, Math.ceil(rows.length / LANC_POR_PAGINA));
+  if (state.lancPage > totalPag) state.lancPage = totalPag;
+  if (state.lancPage < 1) state.lancPage = 1;
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="10" class="empty">Nenhum lançamento no filtro.</td></tr>`;
+    $("#tblLanc tfoot").innerHTML = "";
+    renderPagerLanc(0);
+    return;
+  }
+  const inicio = (state.lancPage - 1) * LANC_POR_PAGINA;
+  const pagina = rows.slice(inicio, inicio + LANC_POR_PAGINA);
+  for (const l of pagina) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${dtLocal(l.data)}</td><td><span class="tag ${l.tipo}">${l.tipo}</span></td>
       <td>${l.produtoNome || prodNome(l.produtoId)}</td><td>${qtd(l.peso, unidDe(l))}</td><td>${money(l.preco)}</td>
@@ -397,8 +441,10 @@ function renderLancamentos() {
   const tUn = rows.filter((l) => unidDe(l) === "un").reduce((s, l) => s + num(l.peso), 0);
   const tC = rows.filter((l) => l.tipo === "compra").reduce((s, l) => s + num(l.total), 0);
   const tV = rows.filter((l) => l.tipo === "venda").reduce((s, l) => s + num(l.total), 0);
-  $("#tblLanc tfoot").innerHTML = `<tr><td colspan="3">${rows.length} registro(s)</td><td>${dual(tPeso, tUn)}</td>
+  $("#tblLanc tfoot").innerHTML = `<tr><td colspan="3">${rows.length} registro(s) · exibindo ${pagina.length}</td><td>${dual(tPeso, tUn)}</td>
     <td>Compras</td><td>${money(tC)}</td><td>Vendas</td><td colspan="3">${money(tV)}</td></tr>`;
+
+  renderPagerLanc(rows.length);
 
   tb.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => {
     const l = state.lancamentos[b.dataset.e]; state.editLanc = b.dataset.e;
@@ -519,6 +565,33 @@ function renderDashboard() {
 $("#relRef").value = new Date().toISOString().slice(0, 10);
 $("#relGerar").onclick = renderRelatorio;
 $("#relTipo").onchange = renderRelatorio;
+$("#relRef").onchange = renderRelatorio;
+if ($("#relMovTipo")) $("#relMovTipo").onchange = renderRelatorio;
+
+function relProdutosSel() {
+  const box = $("#relProdutos");
+  if (!box) return [];
+  return Array.from(box.querySelectorAll("input:checked")).map((i) => i.value);
+}
+function fillRelProdutos() {
+  const box = $("#relProdutos");
+  if (!box) return;
+  const marcados = new Set(relProdutosSel());
+  const list = Object.entries(state.produtos).sort((a, b) => a[1].nome.localeCompare(b[1].nome));
+  box.innerHTML = list.length
+    ? list.map(([id, p]) => `<label class="chk"><input type="checkbox" value="${id}" ${marcados.has(id) ? "checked" : ""} /><span>${p.nome} (${p.unidade === "un" ? "un" : "kg"})</span></label>`).join("")
+    : `<span class="muted">Nenhum produto cadastrado.</span>`;
+  box.querySelectorAll("input").forEach((i) => (i.onchange = renderRelatorio));
+}
+if ($("#relProdTodos")) $("#relProdTodos").onclick = () => {
+  $("#relProdutos").querySelectorAll("input").forEach((i) => (i.checked = true));
+  renderRelatorio();
+};
+if ($("#relProdNenhum")) $("#relProdNenhum").onclick = () => {
+  $("#relProdutos").querySelectorAll("input").forEach((i) => (i.checked = false));
+  renderRelatorio();
+};
+function relMovTipo() { return ($("#relMovTipo") && $("#relMovTipo").value) || ""; }
 $("#relPrint").onclick = () => window.print();
 
 function periodoRel() {
@@ -535,7 +608,12 @@ function periodoRel() {
 }
 function relRows() {
   const { de, ate } = periodoRel();
-  const arr = lancArray().filter((l) => dayKey(l.data) >= de && dayKey(l.data) <= ate);
+  const sel = relProdutosSel();
+  const tipoMov = relMovTipo();
+  const arr = lancArray()
+    .filter((l) => dayKey(l.data) >= de && dayKey(l.data) <= ate)
+    .filter((l) => !sel.length || sel.includes(l.produtoId))
+    .filter((l) => !tipoMov || l.tipo === tipoMov);
   const map = {};
   arr.forEach((l) => {
     const m = (map[l.produtoId] = map[l.produtoId] || { kgC: 0, rC: 0, kgV: 0, rV: 0, unidade: unidDe(l) });
@@ -771,6 +849,7 @@ $("#cxFinalizar").onclick = async () => {
       });
     }
     const n = state.carrinho.length;
+    state.ultimaOperacao = { data: dataISO, tipo, pessoa, obs: obsGeral, contaId, itens: state.carrinho.slice() };
     state.carrinho = [];
     renderCarrinho();
     $("#cxPessoa").value = ""; $("#cxObs").value = "";
@@ -1261,3 +1340,281 @@ ${tabela(porCat, "Resumo por categoria")}
     setTimeout(() => w.print(), 400);
   };
 })();
+
+
+/* ========================================================================== */
+/* ============ DOCUMENTOS (RECIBOS / RELATÓRIOS) E SIMULADOR =============== */
+/* ========================================================================== */
+
+function escDoc(v) {
+  return String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+const DOC_CSS = `
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#111; font-size:12px; margin:0; }
+  h1 { font-size:18px; margin:0 0 2px; }
+  h2 { font-size:13px; font-weight:normal; color:#555; margin:0 0 14px; }
+  h3 { font-size:13px; margin:16px 0 6px; border-bottom:1px solid #ccc; padding-bottom:3px; }
+  table { width:100%; border-collapse:collapse; margin-bottom:8px; }
+  th, td { border-bottom:1px solid #ddd; padding:4px 6px; text-align:left; vertical-align:top; }
+  th { background:#f2f2f2; font-size:11px; }
+  td.r, th.r { text-align:right; white-space:nowrap; }
+  tfoot td { font-weight:bold; background:#f8f8f8; }
+  .kpis { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:6px; }
+  .kpi { border:1px solid #ddd; border-radius:6px; padding:6px 10px; min-width:120px; }
+  .kpi span { display:block; color:#666; font-size:10px; text-transform:uppercase; }
+  .kpi strong { font-size:14px; }
+  .assinatura { margin-top:34px; display:flex; gap:24px; }
+  .assinatura div { flex:1; border-top:1px solid #555; padding-top:4px; text-align:center; color:#555; }
+  .rodape { margin-top:14px; color:#777; font-size:10px; }
+  .aviso { margin:8px 0; padding:6px 8px; border:1px dashed #999; color:#444; font-size:11px; }
+  thead { display:table-header-group; }
+  tr { page-break-inside:avoid; }
+`;
+function abrirDoc(titulo, corpo) {
+  const w = window.open("", "_blank");
+  if (!w) return toast("Permita pop-ups para gerar o documento.", true);
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
+<title>${escDoc(titulo)}</title><style>${DOC_CSS}</style></head><body>${corpo}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 400);
+}
+const empresaNome = () => (state.ui && state.ui.brand) || "Sistema Gerencial";
+
+/* ------------------------------ recibo ----------------------------------- */
+function reciboHTML(op) {
+  const titulo = op.tipo === "venda" ? "Recibo de venda" : "Recibo de compra";
+  const totalGeral = op.itens.reduce((s, i) => s + num(i.total), 0);
+  const tKg = op.itens.filter((i) => (i.unidade || "kg") !== "un").reduce((s, i) => s + num(i.peso), 0);
+  const tUn = op.itens.filter((i) => (i.unidade || "kg") === "un").reduce((s, i) => s + num(i.peso), 0);
+  const linhas = op.itens.map((i) => `<tr>
+    <td>${escDoc(i.produtoNome || prodNome(i.produtoId))}</td>
+    <td class="r">${qtd(i.peso, i.unidade || "kg")}</td>
+    <td class="r">${money(i.preco)}</td>
+    <td class="r">${money(i.total)}</td>
+    <td>${escDoc(i.obs || "-")}</td></tr>`).join("");
+  return `<h1>${escDoc(empresaNome())}</h1>
+<h2>${titulo} — ${escDoc(dtLocal(op.data))}</h2>
+<div class="kpis">
+  <div class="kpi"><span>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</span><strong>${escDoc(op.pessoa || "Não informado")}</strong></div>
+  <div class="kpi"><span>Conta / caixa</span><strong>${escDoc(contaNome(op.contaId))}</strong></div>
+  <div class="kpi"><span>Itens</span><strong>${op.itens.length}</strong></div>
+  <div class="kpi"><span>Quantidade</span><strong>${dual(tKg, tUn)}</strong></div>
+  <div class="kpi"><span>Valor total</span><strong>${money(totalGeral)}</strong></div>
+</div>
+<h3>Itens</h3>
+<table><thead><tr><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Subtotal</th><th>Obs</th></tr></thead>
+<tbody>${linhas}</tbody>
+<tfoot><tr><td colspan="3">Total</td><td class="r">${money(totalGeral)}</td><td></td></tr></tfoot></table>
+${op.obs ? `<p><strong>Observação:</strong> ${escDoc(op.obs)}</p>` : ""}
+<div class="assinatura"><div>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</div><div>${escDoc(empresaNome())}</div></div>
+<p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`;
+}
+if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
+  let op;
+  if (state.carrinho.length) {
+    op = {
+      data: new Date($("#cxData").value || toInputDT(new Date())).toISOString(),
+      tipo: $("#cxTipo").value,
+      pessoa: $("#cxPessoa").value.trim(),
+      obs: $("#cxObs").value.trim(),
+      contaId: ($("#cxConta") && $("#cxConta").value) || contaPadraoId(),
+      itens: state.carrinho.slice(),
+    };
+  } else if (state.ultimaOperacao) {
+    op = state.ultimaOperacao;
+  } else {
+    return toast("Adicione itens ao carrinho ou finalize uma operação para emitir o recibo.", true);
+  }
+  abrirDoc("Recibo", reciboHTML(op));
+};
+
+/* -------------------- relatório de compras/vendas do dia ------------------ */
+if ($("#cxRelData")) $("#cxRelData").value = new Date().toISOString().slice(0, 10);
+if ($("#cxRelDia")) $("#cxRelDia").onclick = () => {
+  const dia = $("#cxRelData").value || new Date().toISOString().slice(0, 10);
+  const tipoFiltro = $("#cxRelTipo").value;
+  const movs = lancArray()
+    .filter((l) => dayKey(l.data) === dia)
+    .filter((l) => !tipoFiltro || l.tipo === tipoFiltro)
+    .sort((a, b) => new Date(a.data) - new Date(b.data));
+
+  const tC = movs.filter((l) => l.tipo === "compra").reduce((s, l) => s + num(l.total), 0);
+  const tV = movs.filter((l) => l.tipo === "venda").reduce((s, l) => s + num(l.total), 0);
+  const kgT = movs.filter((l) => unidDe(l) !== "un").reduce((s, l) => s + num(l.peso), 0);
+  const unT = movs.filter((l) => unidDe(l) === "un").reduce((s, l) => s + num(l.peso), 0);
+
+  const porProduto = {};
+  movs.forEach((l) => {
+    const k = l.produtoNome || prodNome(l.produtoId);
+    const o = (porProduto[k] = porProduto[k] || { qC: 0, rC: 0, qV: 0, rV: 0, u: unidDe(l) });
+    if (l.tipo === "compra") { o.qC += num(l.peso); o.rC += num(l.total); }
+    else { o.qV += num(l.peso); o.rV += num(l.total); }
+  });
+
+  const resumo = Object.keys(porProduto).sort().map((k) => {
+    const o = porProduto[k];
+    return `<tr><td>${escDoc(k)}</td><td class="r">${qtd(o.qC, o.u)}</td><td class="r">${money(o.rC)}</td>
+      <td class="r">${qtd(o.qV, o.u)}</td><td class="r">${money(o.rV)}</td><td class="r">${money(o.rV - o.rC)}</td></tr>`;
+  }).join("") || `<tr><td colspan="6">Sem movimentações no dia.</td></tr>`;
+
+  const linhas = movs.map((l) => `<tr>
+    <td>${escDoc(dtLocal(l.data))}</td><td>${escDoc(l.tipo)}</td>
+    <td>${escDoc(l.produtoNome || prodNome(l.produtoId))}</td>
+    <td class="r">${qtd(l.peso, unidDe(l))}</td><td class="r">${money(l.preco)}</td><td class="r">${money(l.total)}</td>
+    <td>${escDoc(l.pessoa || "-")}</td><td>${escDoc(l.obs || "-")}</td></tr>`).join("")
+    || `<tr><td colspan="8">Sem movimentações no dia.</td></tr>`;
+
+  const rotulo = tipoFiltro === "compra" ? "Relatório de compras" : tipoFiltro === "venda" ? "Relatório de vendas" : "Relatório de compras e vendas";
+
+  abrirDoc(rotulo, `<h1>${escDoc(empresaNome())}</h1>
+<h2>${rotulo} — ${escDoc(dia.split("-").reverse().join("/"))}</h2>
+<div class="kpis">
+  <div class="kpi"><span>Movimentações</span><strong>${movs.length}</strong></div>
+  <div class="kpi"><span>Quantidade</span><strong>${dual(kgT, unT)}</strong></div>
+  <div class="kpi"><span>Total compras</span><strong>${money(tC)}</strong></div>
+  <div class="kpi"><span>Total vendas</span><strong>${money(tV)}</strong></div>
+  <div class="kpi"><span>Resultado</span><strong>${money(tV - tC)}</strong></div>
+</div>
+<h3>Resumo por produto</h3>
+<table><thead><tr><th>Produto</th><th class="r">Qtd. compra</th><th class="r">R$ compra</th><th class="r">Qtd. venda</th><th class="r">R$ venda</th><th class="r">Resultado</th></tr></thead>
+<tbody>${resumo}</tbody></table>
+<h3>Movimentações do dia</h3>
+<table><thead><tr><th>Hora</th><th>Tipo</th><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Total</th><th>Pessoa</th><th>Obs</th></tr></thead>
+<tbody>${linhas}</tbody>
+<tfoot><tr><td colspan="5">Totais</td><td class="r">${money(tC + tV)}</td><td colspan="2"></td></tr></tfoot></table>
+<p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`);
+};
+
+/* ------------------------------ abas compra/venda ------------------------- */
+$$("#cxTabs .tab").forEach((btn) => (btn.onclick = () => {
+  $$("#cxTabs .tab").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  $("#cxPaneReal").classList.toggle("hidden", btn.dataset.tab !== "real");
+  $("#cxPaneSim").classList.toggle("hidden", btn.dataset.tab !== "sim");
+}));
+
+/* ------------------------------ simulador -------------------------------- */
+state.simulacao = [];
+function rotulosSim() {
+  if (!$("#simProduto")) return;
+  const u = prodUnid($("#simProduto").value);
+  const venda = $("#simTipo").value === "venda";
+  $("#simQtdLbl").textContent = u === "un" ? "Quantidade (un)" : "Peso (kg)";
+  $("#simPrecoLbl").textContent = u === "un" ? "Preço por unidade (R$)" : "Preço por kg (R$)";
+  $("#simRefLbl").textContent = venda
+    ? (u === "un" ? "Custo estimado por unidade (R$)" : "Custo estimado por kg (R$)")
+    : (u === "un" ? "Venda estimada por unidade (R$)" : "Venda estimada por kg (R$)");
+  $("#simQtd").step = u === "un" ? "1" : "0.001";
+}
+function sugerirPrecoSim() {
+  rotulosSim();
+  const p = state.produtos[$("#simProduto") && $("#simProduto").value];
+  if (!p) return;
+  const venda = $("#simTipo").value === "venda";
+  $("#simPreco").value = venda ? (p.precoVenda || "") : (p.precoCompra || "");
+  $("#simRef").value = venda ? (p.precoCompra || "") : (p.precoVenda || "");
+  calcSubtotalSim();
+}
+function calcSubtotalSim() {
+  if (!$("#simSubtotal")) return;
+  $("#simSubtotal").textContent = "Subtotal: " + money(num($("#simQtd").value) * num($("#simPreco").value));
+}
+if ($("#simProduto")) $("#simProduto").onchange = sugerirPrecoSim;
+if ($("#simTipo")) $("#simTipo").onchange = sugerirPrecoSim;
+if ($("#simQtd")) $("#simQtd").oninput = calcSubtotalSim;
+if ($("#simPreco")) $("#simPreco").oninput = calcSubtotalSim;
+
+function simResultadoItem(it) {
+  return it.tipo === "venda"
+    ? num(it.peso) * (num(it.preco) - num(it.ref))
+    : num(it.peso) * (num(it.ref) - num(it.preco));
+}
+function renderSimulacao() {
+  const tb = $("#tblSim tbody");
+  if (!tb) return;
+  tb.innerHTML = "";
+  const itens = state.simulacao;
+  if (!itens.length) {
+    tb.innerHTML = `<tr><td colspan="8" class="empty">Nenhum item na simulação.</td></tr>`;
+    $("#tblSim tfoot").innerHTML = "";
+  } else {
+    itens.forEach((it, i) => {
+      tb.insertAdjacentHTML("beforeend", `<tr><td><span class="tag ${it.tipo}">${it.tipo}</span></td>
+        <td>${it.produtoNome}</td><td>${qtd(it.peso, it.unidade)}</td><td>${money(it.preco)}</td>
+        <td>${money(it.total)}</td><td>${money(it.ref)}</td><td>${money(simResultadoItem(it))}</td>
+        <td><button class="btn mini danger" data-simrm="${i}">Remover</button></td></tr>`);
+    });
+    const tKg = itens.filter((i) => i.unidade !== "un").reduce((s, i) => s + num(i.peso), 0);
+    const tUn = itens.filter((i) => i.unidade === "un").reduce((s, i) => s + num(i.peso), 0);
+    $("#tblSim tfoot").innerHTML = `<tr><td colspan="2">${itens.length} item(ns)</td><td>${dual(tKg, tUn)}</td>
+      <td>Total</td><td>${money(itens.reduce((s, i) => s + num(i.total), 0))}</td><td>Resultado</td>
+      <td colspan="2">${money(itens.reduce((s, i) => s + simResultadoItem(i), 0))}</td></tr>`;
+    tb.querySelectorAll("[data-simrm]").forEach((b) => (b.onclick = () => {
+      state.simulacao.splice(Number(b.dataset.simrm), 1);
+      renderSimulacao();
+    }));
+  }
+  const tC = itens.filter((i) => i.tipo === "compra").reduce((s, i) => s + num(i.total), 0);
+  const tV = itens.filter((i) => i.tipo === "venda").reduce((s, i) => s + num(i.total), 0);
+  const res = itens.reduce((s, i) => s + simResultadoItem(i), 0);
+  const base = itens.reduce((s, i) => s + (i.tipo === "venda" ? num(i.peso) * num(i.ref) : num(i.total)), 0);
+  $("#simTotC").textContent = money(tC);
+  $("#simTotV").textContent = money(tV);
+  $("#simResult").textContent = money(res);
+  $("#simMargem").textContent = (base ? ((res / base) * 100) : 0).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+}
+if ($("#simItemForm")) $("#simItemForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const pid = $("#simProduto").value;
+  if (!pid) return toast("Cadastre um produto primeiro.", true);
+  const q = num($("#simQtd").value);
+  if (q <= 0) return toast("Informe a quantidade.", true);
+  const pr = num($("#simPreco").value);
+  state.simulacao.push({
+    tipo: $("#simTipo").value,
+    produtoId: pid,
+    produtoNome: prodNome(pid),
+    unidade: prodUnid(pid),
+    peso: q,
+    preco: pr,
+    ref: num($("#simRef").value),
+    total: q * pr,
+  });
+  $("#simQtd").value = "";
+  calcSubtotalSim();
+  renderSimulacao();
+  toast("Item adicionado à simulação (nada foi gravado).");
+});
+if ($("#simLimpar")) $("#simLimpar").onclick = () => {
+  state.simulacao = [];
+  renderSimulacao();
+  toast("Simulação limpa.");
+};
+if ($("#simPrint")) $("#simPrint").onclick = () => {
+  const itens = state.simulacao;
+  if (!itens.length) return toast("Adicione itens à simulação.", true);
+  const tC = itens.filter((i) => i.tipo === "compra").reduce((s, i) => s + num(i.total), 0);
+  const tV = itens.filter((i) => i.tipo === "venda").reduce((s, i) => s + num(i.total), 0);
+  const res = itens.reduce((s, i) => s + simResultadoItem(i), 0);
+  const linhas = itens.map((i) => `<tr><td>${escDoc(i.tipo)}</td><td>${escDoc(i.produtoNome)}</td>
+    <td class="r">${qtd(i.peso, i.unidade)}</td><td class="r">${money(i.preco)}</td>
+    <td class="r">${money(i.total)}</td><td class="r">${money(i.ref)}</td>
+    <td class="r">${money(simResultadoItem(i))}</td></tr>`).join("");
+  abrirDoc("Simulação", `<h1>${escDoc(empresaNome())}</h1>
+<h2>Simulação de compra / venda — ${escDoc(dtLocal(new Date().toISOString()))}</h2>
+<p class="aviso">Documento apenas para simulação. Nenhum lançamento foi gravado no banco de dados.</p>
+<div class="kpis">
+  <div class="kpi"><span>Compras simuladas</span><strong>${money(tC)}</strong></div>
+  <div class="kpi"><span>Vendas simuladas</span><strong>${money(tV)}</strong></div>
+  <div class="kpi"><span>Resultado estimado</span><strong>${money(res)}</strong></div>
+  <div class="kpi"><span>Itens</span><strong>${itens.length}</strong></div>
+</div>
+<table><thead><tr><th>Tipo</th><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Subtotal</th><th class="r">Referência</th><th class="r">Resultado</th></tr></thead>
+<tbody>${linhas}</tbody></table>
+<p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`);
+};
+renderSimulacao();

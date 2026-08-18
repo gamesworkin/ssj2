@@ -213,3 +213,24 @@ tfoot td{font-weight:700}
 .val-pos{color:var(--primary);font-weight:600}
 .val-neg{color:var(--danger);font-weight:600}
 tr.vencido td{background:color-mix(in srgb,var(--danger) 8%,transparent)}
+
+/* ---------- Paginação ---------- */
+.pager{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem;margin:.8rem 0 1.2rem}
+.pager-info{color:var(--muted);font-size:.85rem}
+.pager-btns{display:flex;gap:.35rem;flex-wrap:wrap}
+.pager-btns .btn{min-width:2.2rem}
+.pager-btns .btn[disabled]{opacity:.4;cursor:not-allowed}
+
+/* ---------- Lista de marcações (checkboxes) ---------- */
+.chk-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.35rem .8rem;
+  max-height:190px;overflow:auto;padding:.6rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel-2)}
+.chk-list .chk{display:flex;align-items:center;gap:.45rem;font-size:.88rem;color:var(--text);
+  text-transform:none;letter-spacing:normal;margin:0;cursor:pointer}
+.chk-list .chk input{width:auto;margin:0;accent-color:var(--primary)}
+
+/* ---------- Abas ---------- */
+.tabs{display:flex;gap:.4rem;margin-bottom:1rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.tabs .tab{background:transparent;border:none;color:var(--muted);font-weight:600;font-size:.95rem;
+  padding:.6rem .9rem;cursor:pointer;border-bottom:2px solid transparent}
+.tabs .tab:hover{color:var(--text)}
+.tabs .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
