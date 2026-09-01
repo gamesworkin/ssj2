@@ -24,6 +24,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import {
   getAuth, signInWithEmailAndPassword, signOut,
   onAuthStateChanged, sendPasswordResetEmail, setPersistence, browserLocalPersistence,
+  createUserWithEmailAndPassword, updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getDatabase, ref, push, set, update, remove, onValue, get, child,
@@ -72,10 +73,18 @@ function loader(on, text = "Carregando sistema...") {
 }
 
 /* ------------------------------ estado ----------------------------------- */
-const state = { produtos: {}, lancamentos: {}, ajustes: {}, contas: {}, financeiro: {}, ui: {}, user: null, editLanc: null, editProd: null, editMov: null, editConta: null, carrinho: [] };
-const isAdmin = () => state.user && state.user.email === ADMIN_EMAIL;
+const state = { produtos: {}, lancamentos: {}, ajustes: {}, contas: {}, financeiro: {}, ui: {}, usuarios: {}, perfil: null, user: null, editLanc: null, editProd: null, editMov: null, editConta: null, editUser: null, fotoTmp: "", usrFoto: "", carrinho: [] };
+const isAdmin = () => !!(state.user && (state.user.email === ADMIN_EMAIL || (state.perfil && state.perfil.cargo === "admin")));
+/* todos os acessos possiveis marcados (usado para o administrador) */
+function acessosTotais() {
+  const o = { escrita: true, usuarios: true };
+  (typeof VIEWS_DISPONIVEIS !== "undefined" ? VIEWS_DISPONIVEIS : []).forEach((v) => { o[v.id] = true; });
+  return o;
+}
 function guard() {
-  if (!isAdmin()) { toast(`Somente ${ADMIN_EMAIL} pode gravar dados.`, true); return false; }
+  if (typeof podeEscrever === "function" ? !podeEscrever() : !isAdmin()) {
+    toast("Seu usuário não tem permissão para gravar dados.", true); return false;
+  }
   return true;
 }
 
@@ -119,7 +128,8 @@ function applyUI(ui) {
   $("#loginSubtitle").textContent = u.loginSubtitle;
   if (u.logo) { $("#logoImg").src = u.logo; $("#brandLogo") && ($("#brandLogo").src = u.logo); }
   const labels = String(u.menu).split(",");
-  $$(".nav-item").forEach((b, i) => { if (labels[i]) b.querySelector("span").textContent = labels[i].trim(); });
+  $$(".nav-item").filter((b) => !["perfil", "usuarios"].includes(b.dataset.view))
+    .forEach((b, i) => { if (labels[i]) b.querySelector("span").textContent = labels[i].trim(); });
   if (!localStorage.getItem("theme")) applyTheme(u.theme);
   // preencher formulário admin
   $("#uiBrand").value = u.brand; $("#uiLoginTitle").value = u.loginTitle;
@@ -185,6 +195,9 @@ function traduzErro(code) {
     "auth/too-many-requests": "Muitas tentativas. Tente mais tarde.",
     "auth/network-request-failed": "Falha de conexão.",
     "auth/missing-password": "Informe a senha.",
+    "auth/email-already-in-use": "Este e-mail já está cadastrado.",
+    "auth/weak-password": "Senha muito fraca (mínimo 6 caracteres).",
+    "auth/operation-not-allowed": "Ative o provedor E-mail/senha no Firebase.",
   };
   return m[code] || "Erro: " + code;
 }
@@ -195,10 +208,17 @@ onAuthStateChanged(auth, (user) => {
   if (user) {
     $("#loginScreen").classList.add("hidden");
     $("#app").classList.remove("hidden");
-    $("#userBadge").textContent = user.email + (isAdmin() ? " (admin)" : " (somente leitura)");
+    $("#userBadge").textContent = user.email;
     loader(true, "Carregando sistema...");
-    startListeners();
+    try { startListeners(); }
+    catch (err) {
+      console.error("Falha ao iniciar os listeners:", err);
+      loader(false);
+      toast("Erro ao carregar o sistema: " + (err && err.message ? err.message : err), true);
+    }
   } else {
+    stopListeners();
+    state.perfil = null;
     $("#app").classList.add("hidden");
     $("#loginScreen").classList.remove("hidden");
     $("#password").value = "";
@@ -212,10 +232,12 @@ setInterval(() => { $("#clock").textContent = new Date().toLocaleString("pt-BR")
 /* ------------------------------ navegação -------------------------------- */
 $$(".nav-item").forEach((btn) => {
   btn.onclick = () => {
+    const alvo = $("#view-" + btn.dataset.view);
+    if (!alvo) { console.warn("View inexistente:", btn.dataset.view); return; }
     $$(".nav-item").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     $$(".view").forEach((v) => v.classList.add("hidden"));
-    $("#view-" + btn.dataset.view).classList.remove("hidden");
+    alvo.classList.remove("hidden");
     closeSidebar();
   };
 });
@@ -226,19 +248,110 @@ $("#sidebarBackdrop").onclick = closeSidebar;
 
 /* ------------------------------ listeners RTDB --------------------------- */
 let loadedOnce = false;
+let loaderTimer = null;
+let unsubs = [];
+let usuariosWatching = false;
+
+function stopListeners() {
+  unsubs.forEach((u) => { try { u(); } catch (e) {} });
+  unsubs = [];
+  usuariosWatching = false;
+  clearTimeout(loaderTimer);
+}
+
+/* observa um caminho de forma tolerante a falhas: qualquer erro (permissão,
+   conexão ou exceção de renderização) nunca deixa a tela de carregamento presa */
+function watch(path, handler) {
+  const un = onValue(
+    ref(db, path),
+    (snap) => {
+      try { handler(snap.val()); }
+      catch (err) { console.error("Erro ao processar '" + path + "':", err); }
+      finally { done(); }
+    },
+    (err) => {
+      console.warn("Sem acesso a '" + path + "':", (err && err.code) || err);
+      done();
+    }
+  );
+  unsubs.push(un);
+}
+
 function startListeners() {
-  onValue(ref(db, "config/ui"), (s) => {
-    const v = s.val();
+  stopListeners();
+  loadedOnce = false;
+  /* rede de segurança: se nada responder em 10s, libera a tela mesmo assim */
+  loaderTimer = setTimeout(() => {
+    if (!loadedOnce) {
+      loadedOnce = true;
+      loader(false);
+      toast("Não foi possível carregar todos os dados. Verifique sua conexão.", true);
+    }
+  }, 10000);
+
+  watch("config/ui", (v) => {
     if (v) localStorage.setItem("uiCache", JSON.stringify(v));
     applyUI(v);
   });
-  onValue(ref(db, "produtos"), (s) => { state.produtos = s.val() || {}; renderProdutos(); fillProductSelects(); renderAll(); done(); });
-  onValue(ref(db, "lancamentos"), (s) => { state.lancamentos = s.val() || {}; renderAll(); done(); });
-  onValue(ref(db, "ajustes"), (s) => { state.ajustes = s.val() || {}; renderAll(); done(); });
-  onValue(ref(db, "contas"), (s) => { state.contas = s.val() || {}; fillContaSelects(); renderAll(); done(); });
-  onValue(ref(db, "financeiro"), (s) => { state.financeiro = s.val() || {}; renderAll(); done(); });
+  watch("produtos", (v) => { state.produtos = v || {}; renderProdutos(); fillProductSelects(); renderAll(); });
+  watch("lancamentos", (v) => { state.lancamentos = v || {}; renderAll(); });
+  watch("ajustes", (v) => { state.ajustes = v || {}; renderAll(); });
+  watch("contas", (v) => { state.contas = v || {}; fillContaSelects(); renderAll(); });
+  watch("financeiro", (v) => { state.financeiro = v || {}; renderAll(); });
+
+  watch("usuarios/" + state.user.uid, (v) => {
+    const ehAdminEmail = (state.user.email || "").toLowerCase() === ADMIN_EMAIL;
+    /* garante que admin@admin.com seja sempre administrador com acesso total */
+    if (ehAdminEmail) {
+      if (!v) {
+        set(ref(db, "usuarios/" + state.user.uid), {
+          nome: "Administrador", sobrenome: "", whatsapp: "", email: state.user.email,
+          cargo: "admin", ativo: true, foto: "", acessos: acessosTotais(), criadoEm: Date.now(),
+        }).catch((e) => console.warn("Falha ao criar perfil do admin:", e));
+      } else if (v.cargo !== "admin" || v.ativo === false) {
+        update(ref(db, "usuarios/" + state.user.uid), { cargo: "admin", ativo: true })
+          .catch((e) => console.warn("Falha ao corrigir perfil do admin:", e));
+      }
+    }
+
+    if (v) {
+      state.perfil = v;
+    } else {
+      /* funcionário autenticado sem cadastro liberado: entra com acesso mínimo,
+         nunca fica travado na tela de carregamento */
+      state.perfil = {
+        email: state.user.email,
+        cargo: ehAdminEmail ? "admin" : "funcionario",
+        ativo: true,
+        acessos: ehAdminEmail ? acessosTotais() : { dashboard: true },
+      };
+      if (!ehAdminEmail) toast("Seu cadastro ainda não foi liberado pelo administrador. Acesso limitado.", true);
+    }
+
+    if (!ehAdminEmail && state.perfil.ativo === false) {
+      toast("Seu acesso foi desativado pelo administrador.", true);
+      loader(false);
+      setTimeout(() => signOut(auth), 1500);
+      return;
+    }
+
+    preencherPerfil();
+    aplicarAcessos();
+    /* a lista completa de funcionários é visível apenas ao administrador */
+    if (isAdmin() && !usuariosWatching) {
+      usuariosWatching = true;
+      watch("usuarios", (all) => { state.usuarios = all || {}; renderUsuarios(); });
+    }
+  });
 }
-function done() { if (!loadedOnce) { loadedOnce = true; setTimeout(() => loader(false), 500); } }
+
+function done() {
+  if (!loadedOnce) {
+    loadedOnce = true;
+    clearTimeout(loaderTimer);
+    setTimeout(() => loader(false), 300);
+  }
+}
 
 /* ------------------------------ produtos --------------------------------- */
 $("#prodForm").addEventListener("submit", async (e) => {
@@ -262,8 +375,12 @@ $("#prodCancel").onclick = () => { state.editProd = null; $("#prodForm").reset()
 function renderProdutos() {
   const tb = $("#tblProdutos tbody"); tb.innerHTML = "";
   const list = Object.entries(state.produtos).sort((a, b) => a[1].nome.localeCompare(b[1].nome));
-  if (!list.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">Nenhum produto cadastrado.</td></tr>`; return; }
-  for (const [id, p] of list) {
+  if (!list.length) {
+    tb.innerHTML = `<tr><td colspan="7" class="empty">Nenhum produto cadastrado.</td></tr>`;
+    renderPager("tblProdutos", "produtos", 0, renderProdutos, "produto(s)");
+    return;
+  }
+  for (const [id, p] of paginar("produtos", list)) {
     const margem = num(p.precoVenda) - num(p.precoCompra);
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${p.nome}</td><td>${p.categoria || "-"}</td><td>${p.unidade === "un" ? "un" : "kg"}</td><td>${money(p.precoCompra)}</td>
@@ -283,6 +400,7 @@ function renderProdutos() {
     if (!guard() || !confirm("Excluir produto?")) return;
     await remove(ref(db, "produtos/" + b.dataset.d)); toast("Produto excluído.");
   }));
+  renderPager("tblProdutos", "produtos", list.length, renderProdutos, "produto(s)");
 }
 function fillProductSelects() {
   const list = Object.entries(state.produtos).sort((a, b) => a[1].nome.localeCompare(b[1].nome));
@@ -358,11 +476,11 @@ $("#lancCancel").onclick = () => { state.editLanc = null; $("#lancForm").reset()
 
 
 ["#fDe", "#fAte", "#fProduto", "#fTipo", "#fBusca"].forEach((s) => {
-  const reset = () => { state.lancPage = 1; renderLancamentos(); };
+  const reset = () => { resetPagina("lanc"); renderLancamentos(); };
   $(s).addEventListener("input", reset);
   $(s).addEventListener("change", reset);
 });
-$("#fLimpar").onclick = () => { ["#fDe", "#fAte", "#fBusca"].forEach((s) => ($(s).value = "")); $("#fProduto").value = ""; $("#fTipo").value = ""; state.lancPage = 1; renderLancamentos(); };
+$("#fLimpar").onclick = () => { ["#fDe", "#fAte", "#fBusca"].forEach((s) => ($(s).value = "")); $("#fProduto").value = ""; $("#fTipo").value = ""; resetPagina("lanc"); renderLancamentos(); };
 
 function lancArray() {
   return Object.entries(state.lancamentos)
@@ -383,51 +501,83 @@ function aplicaFiltros(arr) {
     return true;
   });
 }
-const LANC_POR_PAGINA = 50;
-const LANC_PAGS_VISIVEIS = 5;
-state.lancPage = 1;
+/* ============================ PAGINAÇÃO GENÉRICA ==========================
+   30 itens por página, no máximo 5 números de página visíveis e setas < >
+   para navegar quando existirem mais páginas.
+   ======================================================================== */
+const POR_PAGINA = 30;
+const PAGS_VISIVEIS = 5;
+state.pages = state.pages || {};
 
-function renderPagerLanc(total) {
-  const el = $("#lancPager");
+const totalPaginas = (total) => Math.max(1, Math.ceil(total / POR_PAGINA));
+
+function paginar(key, rows) {
+  const tp = totalPaginas(rows.length);
+  let cur = Number(state.pages[key] || 1);
+  if (cur > tp) cur = tp;
+  if (cur < 1) cur = 1;
+  state.pages[key] = cur;
+  const ini = (cur - 1) * POR_PAGINA;
+  return rows.slice(ini, ini + POR_PAGINA);
+}
+
+function resetPagina(key) { state.pages[key] = 1; }
+
+/* devolve (criando se preciso) o container do pager logo após a tabela */
+function pagerHost(tableId) {
+  const fixo = document.getElementById(tableId + "Pager");
+  if (fixo) return fixo;
+  const t = document.getElementById(tableId);
+  if (!t) return null;
+  let el = document.getElementById("pager-" + tableId);
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "pager";
+    el.id = "pager-" + tableId;
+    const host = t.closest(".table-wrap") || t;
+    host.insertAdjacentElement("afterend", el);
+  }
+  return el;
+}
+
+function renderPager(tableId, key, total, rerender, rotulo) {
+  const el = pagerHost(tableId);
   if (!el) return;
-  const totalPag = Math.max(1, Math.ceil(total / LANC_POR_PAGINA));
-  if (!total) { el.innerHTML = ""; return; }
-  const cur = state.lancPage;
-  let ini = Math.max(1, cur - Math.floor(LANC_PAGS_VISIVEIS / 2));
-  let fim = Math.min(totalPag, ini + LANC_PAGS_VISIVEIS - 1);
-  ini = Math.max(1, fim - LANC_PAGS_VISIVEIS + 1);
-  const setas = totalPag > LANC_PAGS_VISIVEIS;
-  let html = `<span class="pager-info">Página ${cur} de ${totalPag} · ${total} movimentação(ões)</span><div class="pager-btns">`;
-  if (setas) html += `<button class="btn mini" data-pg="${cur - 1}" ${cur === 1 ? "disabled" : ""}>&lt;</button>`;
+  const tp = totalPaginas(total);
+  if (total <= POR_PAGINA) { el.innerHTML = ""; return; }
+  const cur = Number(state.pages[key] || 1);
+  let ini = Math.max(1, cur - Math.floor(PAGS_VISIVEIS / 2));
+  let fim = Math.min(tp, ini + PAGS_VISIVEIS - 1);
+  ini = Math.max(1, fim - PAGS_VISIVEIS + 1);
+  const setas = tp > PAGS_VISIVEIS;
+  let html = `<span class="pager-info">Página ${cur} de ${tp} · ${total} ${rotulo || "registro(s)"}</span><div class="pager-btns">`;
+  if (setas) html += `<button class="btn mini" data-pg="${cur - 1}" ${cur === 1 ? "disabled" : ""} aria-label="Página anterior">&lt;</button>`;
   for (let pg = ini; pg <= fim; pg++) {
     html += `<button class="btn mini ${pg === cur ? "primary" : ""}" data-pg="${pg}">${pg}</button>`;
   }
-  if (setas) html += `<button class="btn mini" data-pg="${cur + 1}" ${cur === totalPag ? "disabled" : ""}>&gt;</button>`;
+  if (setas) html += `<button class="btn mini" data-pg="${cur + 1}" ${cur === tp ? "disabled" : ""} aria-label="Próxima página">&gt;</button>`;
   html += `</div>`;
   el.innerHTML = html;
   el.querySelectorAll("[data-pg]").forEach((b) => (b.onclick = () => {
     const pg = Number(b.dataset.pg);
-    if (pg < 1 || pg > totalPag || pg === state.lancPage) return;
-    state.lancPage = pg;
-    renderLancamentos();
-    $("#tblLanc").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (pg < 1 || pg > tp || pg === Number(state.pages[key] || 1)) return;
+    state.pages[key] = pg;
+    rerender();
+    const t = document.getElementById(tableId);
+    if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
   }));
 }
 
 function renderLancamentos() {
   const rows = aplicaFiltros(lancArray());
   const tb = $("#tblLanc tbody"); tb.innerHTML = "";
-  const totalPag = Math.max(1, Math.ceil(rows.length / LANC_POR_PAGINA));
-  if (state.lancPage > totalPag) state.lancPage = totalPag;
-  if (state.lancPage < 1) state.lancPage = 1;
   if (!rows.length) {
     tb.innerHTML = `<tr><td colspan="10" class="empty">Nenhum lançamento no filtro.</td></tr>`;
     $("#tblLanc tfoot").innerHTML = "";
-    renderPagerLanc(0);
+    renderPager("tblLanc", "lanc", 0, renderLancamentos, "lançamento(s)");
     return;
   }
-  const inicio = (state.lancPage - 1) * LANC_POR_PAGINA;
-  const pagina = rows.slice(inicio, inicio + LANC_POR_PAGINA);
+  const pagina = paginar("lanc", rows);
   for (const l of pagina) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${dtLocal(l.data)}</td><td><span class="tag ${l.tipo}">${l.tipo}</span></td>
@@ -444,7 +594,7 @@ function renderLancamentos() {
   $("#tblLanc tfoot").innerHTML = `<tr><td colspan="3">${rows.length} registro(s) · exibindo ${pagina.length}</td><td>${dual(tPeso, tUn)}</td>
     <td>Compras</td><td>${money(tC)}</td><td>Vendas</td><td colspan="3">${money(tV)}</td></tr>`;
 
-  renderPagerLanc(rows.length);
+  renderPager("tblLanc", "lanc", rows.length, renderLancamentos, "lançamento(s)");
 
   tb.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => {
     const l = state.lancamentos[b.dataset.e]; state.editLanc = b.dataset.e;
@@ -508,7 +658,9 @@ function renderEstoque() {
   const tb = $("#tblEstoque tbody"); tb.innerHTML = "";
   const ids = Object.keys(map);
   if (!ids.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Sem movimentação.</td></tr>`; }
-  ids.sort((a, b) => prodNome(a).localeCompare(prodNome(b))).forEach((id) => {
+  ids.sort((a, b) => prodNome(a).localeCompare(prodNome(b)));
+  renderPager("tblEstoque", "estoque", ids.length, renderEstoque, "produto(s)");
+  paginar("estoque", ids).forEach((id) => {
     const m = map[id];
     const u = prodUnid(id);
     const f = (v) => (u === "un" ? un(v) : kg(v));
@@ -519,7 +671,8 @@ function renderEstoque() {
   const ta = $("#tblAjustes tbody"); ta.innerHTML = "";
   const list = Object.entries(state.ajustes).map(([id, a]) => ({ id, ...a })).sort((a, b) => new Date(b.data) - new Date(a.data));
   if (!list.length) ta.innerHTML = `<tr><td colspan="7" class="empty">Nenhum ajuste.</td></tr>`;
-  list.forEach((a) => {
+  renderPager("tblAjustes", "ajustes", list.length, renderEstoque, "ajuste(s)");
+  paginar("ajustes", list).forEach((a) => {
     ta.insertAdjacentHTML("beforeend", `<tr><td>${dtLocal(a.data)}</td><td>${a.produtoNome || prodNome(a.produtoId)}</td>
       <td>${a.tipo}</td><td>${qtd(a.peso, unidDe(a))}</td><td>${money(a.custo)}</td><td>${a.obs || "-"}</td>
       <td><button class="btn mini danger" data-da="${a.id}">Excluir</button></td></tr>`);
@@ -594,10 +747,24 @@ if ($("#relProdNenhum")) $("#relProdNenhum").onclick = () => {
 function relMovTipo() { return ($("#relMovTipo") && $("#relMovTipo").value) || ""; }
 $("#relPrint").onclick = () => window.print();
 
+/* semana (segunda a domingo) que contém a data informada (YYYY-MM-DD) */
+function semanaDe(iso) {
+  const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  const base = new Date(y, (m || 1) - 1, d || 1);
+  const dow = (base.getDay() + 6) % 7; // 0 = segunda
+  const ini = new Date(base); ini.setDate(base.getDate() - dow);
+  const fim = new Date(ini); fim.setDate(ini.getDate() + 6);
+  const fmt = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  return { de: fmt(ini), ate: fmt(fim) };
+}
 function periodoRel() {
   const tipo = $("#relTipo").value;
   const ref0 = $("#relRef").value || new Date().toISOString().slice(0, 10);
   if (tipo === "diario") return { de: ref0, ate: ref0, label: "Dia " + ref0 };
+  if (tipo === "semanal") {
+    const s = semanaDe(ref0);
+    return { de: s.de, ate: s.ate, label: `Semana ${s.de.split("-").reverse().join("/")} a ${s.ate.split("-").reverse().join("/")}` };
+  }
   if (tipo === "mensal") {
     const [y, m] = ref0.split("-");
     const last = new Date(Number(y), Number(m), 0).getDate();
@@ -1046,12 +1213,14 @@ $("#finTransfForm").addEventListener("submit", async (e) => {
 
 /* --------------------------- filtros / extrato ---------------------------- */
 ["#finFDe", "#finFAte", "#finFConta", "#finFTipo", "#finFOrigem", "#finFBusca"].forEach((s) => {
-  $(s).addEventListener("input", renderFinanceiro);
-  $(s).addEventListener("change", renderFinanceiro);
+  const reFin = () => { resetPagina("finMov"); resetPagina("finCat"); renderFinanceiro(); };
+  $(s).addEventListener("input", reFin);
+  $(s).addEventListener("change", reFin);
 });
 $("#finFLimpar").onclick = () => {
   ["#finFDe", "#finFAte", "#finFBusca"].forEach((s) => ($(s).value = ""));
   $("#finFConta").value = ""; $("#finFTipo").value = ""; $("#finFOrigem").value = "";
+  resetPagina("finMov"); resetPagina("finCat");
   renderFinanceiro();
 };
 
@@ -1079,7 +1248,8 @@ function renderFinanceiro() {
   const tc = $("#tblFinContas tbody"); tc.innerHTML = "";
   const contas = contasArray();
   if (!contas.length) tc.innerHTML = `<tr><td colspan="7" class="empty">Nenhuma conta cadastrada. Cadastre um caixa para começar.</td></tr>`;
-  contas.forEach((c) => {
+  renderPager("tblFinContas", "finContas", contas.length, renderFinanceiro, "conta(s)");
+  paginar("finContas", contas).forEach((c) => {
     const s = saldos[c.id] || { inicial: 0, mov: 0, saldo: 0 };
     tc.insertAdjacentHTML("beforeend", `<tr><td>${c.nome}</td><td>${c.tipo || "caixa"}</td>
       <td>${c.padrao ? '<span class="tag pago">padrão</span>' : "-"}</td>
@@ -1120,7 +1290,8 @@ function renderFinanceiro() {
   const hoje = new Date().toISOString().slice(0, 10);
   const pendOrd = pend.slice().sort((a, b) => String(a.venc || dayKey(a.data)).localeCompare(String(b.venc || dayKey(b.data))));
   if (!pendOrd.length) tp.innerHTML = `<tr><td colspan="7" class="empty">Nenhuma pendência.</td></tr>`;
-  pendOrd.forEach((m) => {
+  renderPager("tblFinPend", "finPend", pendOrd.length, renderFinanceiro, "pendência(s)");
+  paginar("finPend", pendOrd).forEach((m) => {
     const venc = m.venc || dayKey(m.data);
     tp.insertAdjacentHTML("beforeend", `<tr class="${venc < hoje ? "vencido" : ""}">
       <td>${venc.split("-").reverse().join("/")}${venc < hoje ? ' <span class="tag saida">vencido</span>' : ""}</td>
@@ -1138,12 +1309,17 @@ function renderFinanceiro() {
   /* extrato */
   const rows = finFiltrados();
   const tb = $("#tblFinMov tbody"); tb.innerHTML = "";
-  if (!rows.length) { tb.innerHTML = `<tr><td colspan="9" class="empty">Nenhum movimento no filtro.</td></tr>`; $("#tblFinMov tfoot").innerHTML = ""; }
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="9" class="empty">Nenhum movimento no filtro.</td></tr>`;
+    $("#tblFinMov tfoot").innerHTML = "";
+    renderPager("tblFinMov", "finMov", 0, renderFinanceiro, "movimento(s)");
+  }
   else {
     const cres = rows.slice().sort((a, b) => new Date(a.data) - new Date(b.data));
     let acc = 0; const saldoDe = {};
     cres.forEach((m) => { if (movPago(m)) acc += movSinal(m) * num(m.valor); saldoDe[m.id] = acc; });
-    rows.forEach((m) => {
+    renderPager("tblFinMov", "finMov", rows.length, renderFinanceiro, "movimento(s)");
+    paginar("finMov", rows).forEach((m) => {
       tb.insertAdjacentHTML("beforeend", `<tr>
         <td>${dtLocal(m.data)}</td>
         <td>${m.desc || "-"}${movPago(m) ? "" : ' <span class="tag pendente">pendente</span>'}</td>
@@ -1196,7 +1372,8 @@ function renderFinanceiro() {
   });
   const keys = Object.keys(cat).sort();
   if (!keys.length) tcat.innerHTML = `<tr><td colspan="4" class="empty">Sem dados no período.</td></tr>`;
-  keys.forEach((k) => {
+  renderPager("tblFinCat", "finCat", keys.length, renderFinanceiro, "categoria(s)");
+  paginar("finCat", keys).forEach((k) => {
     const c = cat[k];
     tcat.insertAdjacentHTML("beforeend", `<tr><td>${k}</td><td class="val-pos">${money(c.e)}</td>
       <td class="val-neg">${money(c.s)}</td><td><strong>${money(c.e - c.s)}</strong></td></tr>`);
@@ -1214,18 +1391,21 @@ $("#finCsv").onclick = () => {
 
 /* --------------------- relatórios financeiros em PDF ---------------------- */
 (function relatoriosPDF() {
-  const elTipo = $("#relTipo");
+  const elTipo = $("#finRelTipo");
   if (!elTipo) return;
   const hoje = new Date();
-  $("#relDia").value = hoje.toISOString().slice(0, 10);
-  $("#relMes").value = hoje.toISOString().slice(0, 7);
-  $("#relAno").value = hoje.getFullYear();
+  const hojeIso = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-${String(hoje.getDate()).padStart(2, "0")}`;
+  $("#finRelDia").value = hojeIso;
+  $("#finRelSemana").value = hojeIso;
+  $("#finRelMes").value = hojeIso.slice(0, 7);
+  $("#finRelAno").value = hoje.getFullYear();
 
   function alternaCampos() {
     const t = elTipo.value;
-    $("#relCampoDia").classList.toggle("hidden", t !== "dia");
-    $("#relCampoMes").classList.toggle("hidden", t !== "mes");
-    $("#relCampoAno").classList.toggle("hidden", t !== "ano");
+    $("#finRelCampoDia").classList.toggle("hidden", t !== "dia");
+    $("#finRelCampoSemana").classList.toggle("hidden", t !== "semana");
+    $("#finRelCampoMes").classList.toggle("hidden", t !== "mes");
+    $("#finRelCampoAno").classList.toggle("hidden", t !== "ano");
   }
   elTipo.onchange = alternaCampos;
   alternaCampos();
@@ -1233,28 +1413,38 @@ $("#finCsv").onclick = () => {
   const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
     "agosto", "setembro", "outubro", "novembro", "dezembro"];
 
+  const br = (d) => String(d).split("-").reverse().join("/");
+
   function periodo() {
     const t = elTipo.value;
     if (t === "dia") {
-      const d = $("#relDia").value || new Date().toISOString().slice(0, 10);
-      return { pref: d, titulo: "Relatório financeiro diário", label: d.split("-").reverse().join("/") };
+      const d = $("#finRelDia").value || hojeIso;
+      return { de: d, ate: d, titulo: "Relatório financeiro diário", label: br(d) };
+    }
+    if (t === "semana") {
+      const s = semanaDe($("#finRelSemana").value || hojeIso);
+      return { de: s.de, ate: s.ate, titulo: "Relatório financeiro semanal", label: `${br(s.de)} a ${br(s.ate)}` };
     }
     if (t === "ano") {
-      const a = String($("#relAno").value || new Date().getFullYear());
-      return { pref: a, titulo: "Relatório financeiro anual", label: a };
+      const y = String($("#finRelAno").value || hoje.getFullYear());
+      return { de: `${y}-01-01`, ate: `${y}-12-31`, titulo: "Relatório financeiro anual", label: y };
     }
-    const m = $("#relMes").value || new Date().toISOString().slice(0, 7);
+    const m = $("#finRelMes").value || hojeIso.slice(0, 7);
     const [ano, mes] = m.split("-");
-    return { pref: m, titulo: "Relatório financeiro mensal", label: `${MESES[Number(mes) - 1]} de ${ano}` };
+    const last = new Date(Number(ano), Number(mes), 0).getDate();
+    return {
+      de: `${ano}-${mes}-01`, ate: `${ano}-${mes}-${String(last).padStart(2, "0")}`,
+      titulo: "Relatório financeiro mensal", label: `${MESES[Number(mes) - 1]} de ${ano}`,
+    };
   }
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 
-  $("#relPdf").onclick = () => {
+  $("#finRelPdf").onclick = () => {
     const p = periodo();
     const contaFiltro = $("#relConta").value;
     const movs = movimentosTodos()
-      .filter((m) => String(dayKey(m.data)).startsWith(p.pref))
+      .filter((m) => { const d = dayKey(m.data); return d >= p.de && d <= p.ate; })
       .filter((m) => !contaFiltro || m.contaId === contaFiltro)
       .sort((a, b) => new Date(a.data) - new Date(b.data));
 
@@ -1618,3 +1808,329 @@ if ($("#simPrint")) $("#simPrint").onclick = () => {
 <p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`);
 };
 renderSimulacao();
+
+/* ==========================================================================
+   MÓDULO: PERFIL DO USUÁRIO + GESTÃO DE FUNCIONÁRIOS (ADMIN)
+   ========================================================================== */
+
+const VIEWS_DISPONIVEIS = [
+  { id: "dashboard", nome: "Painel" },
+  { id: "lancamentos", nome: "Lançamentos" },
+  { id: "estoque", nome: "Estoque" },
+  { id: "produtos", nome: "Produtos" },
+  { id: "relatorios", nome: "Relatórios" },
+  { id: "dados", nome: "Import/Export" },
+  { id: "admin", nome: "Interface" },
+  { id: "caixa", nome: "Compra/Venda" },
+  { id: "financeiro", nome: "Financeiro" },
+];
+
+/* app secundário: permite ao admin criar usuários sem perder a própria sessão */
+let secondaryAuth = null;
+function getSecondaryAuth() {
+  if (!secondaryAuth) {
+    const app2 = initializeApp(firebaseConfig, "admin-cadastro");
+    secondaryAuth = getAuth(app2);
+  }
+  return secondaryAuth;
+}
+
+/* ------------------------------ máscaras --------------------------------- */
+function maskWhats(v) {
+  const d = String(v || "").replace(/\D/g, "").slice(0, 11);
+  if (d.length <= 2) return d.length ? "(" + d : "";
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+function bindWhatsMask(sel) {
+  const el = $(sel);
+  if (!el) return;
+  el.addEventListener("input", () => { el.value = maskWhats(el.value); });
+}
+bindWhatsMask("#perfWhats");
+bindWhatsMask("#usrWhats");
+
+/* ------------------------------ imagem base64 ---------------------------- */
+function fileToBase64(file, maxLado = 320) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) return reject(new Error("Arquivo não é imagem."));
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("Falha ao ler arquivo."));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Imagem inválida."));
+      img.onload = () => {
+        const esc = Math.min(1, maxLado / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * esc);
+        c.height = Math.round(img.height * esc);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.82));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function avatarPadrao(nome, email) {
+  const t = ((nome || email || "?").trim()[0] || "?").toUpperCase();
+  return t;
+}
+function pintaAvatar(elId, foto, nome, email) {
+  const box = $(elId);
+  if (!box) return;
+  if (foto) box.innerHTML = `<img src="${foto}" alt="Foto de perfil" />`;
+  else box.innerHTML = `<span>${avatarPadrao(nome, email)}</span>`;
+}
+
+/* ------------------------------ perfil ----------------------------------- */
+function perfilAtual() { return state.perfil || {}; }
+function nomeExibicao() {
+  const p = perfilAtual();
+  const n = [p.nome, p.sobrenome].filter(Boolean).join(" ").trim();
+  return n || (state.user ? state.user.email : "");
+}
+function cargoLabel() {
+  const p = perfilAtual();
+  if (isAdmin()) return "Administrador";
+  return p.cargo || "Funcionário";
+}
+
+function preencherPerfil() {
+  if (!state.user) return;
+  const p = perfilAtual();
+  $("#perfNome").value = p.nome || "";
+  $("#perfSobrenome").value = p.sobrenome || "";
+  $("#perfWhats").value = maskWhats(p.whatsapp || "");
+  $("#perfEmail").value = state.user.email || "";
+  $("#perfCargo").value = cargoLabel();
+  $("#perfFotoUrl").value = /^https?:/i.test(p.foto || "") ? p.foto : "";
+  state.fotoTmp = p.foto || "";
+  pintaAvatar("#perfAvatar", state.fotoTmp, p.nome, state.user.email);
+  $("#userBadge").innerHTML =
+    `<span class="badge-user"><span class="badge-ava">${p.foto ? `<img src="${p.foto}" alt="" />` : avatarPadrao(p.nome, state.user.email)}</span>` +
+    `<span><b>${nomeExibicao()}</b><small>${cargoLabel()}</small></span></span>`;
+  const acc = $("#perfAcessos");
+  if (acc) {
+    acc.innerHTML = VIEWS_DISPONIVEIS
+      .filter((v) => podeVer(v.id))
+      .map((v) => `<span class="tag">${v.nome}</span>`).join("") +
+      (podeEscrever() ? `<span class="tag ok">Pode gravar dados</span>` : `<span class="tag">Somente leitura</span>`);
+  }
+}
+
+$("#perfFotoFile") && ($("#perfFotoFile").onchange = async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  try {
+    state.fotoTmp = await fileToBase64(f);
+    $("#perfFotoUrl").value = "";
+    pintaAvatar("#perfAvatar", state.fotoTmp, $("#perfNome").value, state.user && state.user.email);
+    toast("Foto carregada. Clique em salvar.");
+  } catch (err) { toast(err.message, true); }
+});
+$("#perfFotoUrl") && ($("#perfFotoUrl").oninput = () => {
+  const u = $("#perfFotoUrl").value.trim();
+  if (u) { state.fotoTmp = u; pintaAvatar("#perfAvatar", u, $("#perfNome").value, state.user && state.user.email); }
+});
+$("#perfFotoLimpar") && ($("#perfFotoLimpar").onclick = () => {
+  state.fotoTmp = ""; $("#perfFotoUrl").value = ""; $("#perfFotoFile").value = "";
+  pintaAvatar("#perfAvatar", "", $("#perfNome").value, state.user && state.user.email);
+});
+
+$("#perfilForm") && $("#perfilForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!state.user) return;
+  const dados = {
+    nome: $("#perfNome").value.trim(),
+    sobrenome: $("#perfSobrenome").value.trim(),
+    whatsapp: $("#perfWhats").value.trim(),
+    foto: state.fotoTmp || "",
+    email: state.user.email,
+  };
+  /* apenas o administrador pode alterar cargo/acessos */
+  if (isAdmin()) dados.cargo = perfilAtual().cargo || "admin";
+  try {
+    await update(ref(db, "usuarios/" + state.user.uid), dados);
+    await updateProfile(state.user, {
+      displayName: [dados.nome, dados.sobrenome].filter(Boolean).join(" ") || null,
+    }).catch(() => {});
+    toast("Perfil atualizado.");
+  } catch (err) { toast("Erro ao salvar perfil: " + err.message, true); }
+});
+
+$("#perfSenha") && ($("#perfSenha").onclick = async () => {
+  try {
+    await sendPasswordResetEmail(auth, state.user.email);
+    toast("Enviamos um link de redefinição para seu e-mail.");
+  } catch (err) { toast(traduzErro(err.code), true); }
+});
+
+/* ------------------------------ permissões ------------------------------- */
+function podeVer(view) {
+  if (isAdmin()) return true;
+  const a = (perfilAtual().acessos) || {};
+  return !!a[view];
+}
+function podeEscrever() {
+  if (isAdmin()) return true;
+  return !!(perfilAtual().acessos && perfilAtual().acessos.escrita);
+}
+function aplicarAcessos() {
+  $$(".nav-item").forEach((b) => {
+    const v = b.dataset.view;
+    if (v === "perfil") { b.classList.remove("hidden"); return; }
+    if (v === "usuarios") { b.classList.toggle("hidden", !isAdmin()); return; }
+    b.classList.toggle("hidden", !podeVer(v));
+  });
+  const ativo = $$(".nav-item").find((b) => b.classList.contains("active"));
+  if (!ativo || ativo.classList.contains("hidden")) {
+    const primeiro = $$(".nav-item").find((b) => !b.classList.contains("hidden"));
+    if (primeiro) primeiro.click();
+  }
+}
+
+/* ------------------------------ admin: funcionários ---------------------- */
+function usuariosArray() {
+  return Object.entries(state.usuarios || {}).map(([uid, u]) => ({ uid, ...u }))
+    .sort((a, b) => (a.nome || a.email || "").localeCompare(b.nome || b.email || ""));
+}
+function renderAcessosCheck(host, acessos) {
+  const a = acessos || {};
+  $(host).innerHTML = VIEWS_DISPONIVEIS.map((v) =>
+    `<label class="chk"><input type="checkbox" value="${v.id}" ${a[v.id] ? "checked" : ""}/> ${v.nome}</label>`
+  ).join("") + `<label class="chk"><input type="checkbox" value="escrita" ${a.escrita ? "checked" : ""}/> <b>Permitir gravar/editar dados</b></label>`;
+}
+function lerAcessos(host) {
+  const o = {};
+  $$(host + " input[type=checkbox]").forEach((c) => { o[c.value] = c.checked; });
+  return o;
+}
+function renderUsuarios() {
+  const tb = $("#tblUsuarios tbody");
+  if (!tb) return;
+  const rows = usuariosArray();
+  tb.innerHTML = rows.length ? rows.map((u) => {
+    const acessos = Object.entries(u.acessos || {}).filter(([, v]) => v)
+      .map(([k]) => (k === "escrita" ? "gravar" : (VIEWS_DISPONIVEIS.find((x) => x.id === k) || {}).nome || k)).join(", ");
+    return `<tr>
+      <td><span class="badge-ava sm">${u.foto ? `<img src="${u.foto}" alt="" />` : avatarPadrao(u.nome, u.email)}</span></td>
+      <td>${[u.nome, u.sobrenome].filter(Boolean).join(" ") || "-"}</td>
+      <td>${u.email || "-"}</td>
+      <td>${u.whatsapp || "-"}</td>
+      <td>${u.cargo === "admin" ? "Administrador" : (u.cargo || "Funcionário")}</td>
+      <td>${u.ativo === false ? '<span class="tag">Inativo</span>' : '<span class="tag ok">Ativo</span>'}</td>
+      <td class="small">${acessos || "-"}</td>
+      <td class="row gap">
+        <button class="btn mini" data-euser="${u.uid}">Editar</button>
+        <button class="btn mini" data-tuser="${u.uid}">${u.ativo === false ? "Ativar" : "Desativar"}</button>
+        <button class="btn mini danger" data-duser="${u.uid}">Excluir</button>
+      </td></tr>`;
+  }).join("") : `<tr><td colspan="8" class="muted">Nenhum funcionário cadastrado.</td></tr>`;
+
+  $$("#tblUsuarios [data-euser]").forEach((b) => (b.onclick = () => editarUsuario(b.dataset.euser)));
+  $$("#tblUsuarios [data-tuser]").forEach((b) => (b.onclick = async () => {
+    if (!isAdmin()) return toast("Somente o administrador.", true);
+    const u = state.usuarios[b.dataset.tuser];
+    if (ehUsuarioAdminMaster(u)) return toast("O administrador principal não pode ser desativado.", true);
+    await update(ref(db, "usuarios/" + b.dataset.tuser), { ativo: !(u.ativo !== false) });
+    toast("Situação atualizada.");
+  }));
+  $$("#tblUsuarios [data-duser]").forEach((b) => (b.onclick = async () => {
+    if (!isAdmin()) return toast("Somente o administrador.", true);
+    if (ehUsuarioAdminMaster(state.usuarios[b.dataset.duser])) return toast("O administrador principal não pode ser excluído.", true);
+    if (!confirm("Remover o cadastro deste funcionário do sistema?\n(O login no Firebase Authentication deve ser removido pelo console.)")) return;
+    await remove(ref(db, "usuarios/" + b.dataset.duser));
+    toast("Funcionário removido.");
+  }));
+}
+
+function limparFormUsuario() {
+  state.editUser = null;
+  state.usrFoto = "";
+  $("#usuarioForm").reset();
+  $("#usrEmail").disabled = false;
+  $("#usrSenhaWrap").classList.remove("hidden");
+  $("#usrFormTitulo").textContent = "Novo funcionário";
+  renderAcessosCheck("#usrAcessos", { dashboard: true, lancamentos: true });
+  pintaAvatar("#usrAvatar", "", "", "");
+}
+const ehUsuarioAdminMaster = (u) => !!(u && (u.email || "").toLowerCase() === ADMIN_EMAIL);
+function editarUsuario(uid) {
+  const u = state.usuarios[uid];
+  if (!u) return;
+  if (!isAdmin()) return toast("Somente o administrador pode editar funcionários.", true);
+  state.editUser = uid;
+  state.usrFoto = u.foto || "";
+  $("#usrNome").value = u.nome || "";
+  $("#usrSobrenome").value = u.sobrenome || "";
+  $("#usrWhats").value = maskWhats(u.whatsapp || "");
+  $("#usrEmail").value = u.email || "";
+  $("#usrEmail").disabled = true;
+  $("#usrCargo").value = u.cargo === "admin" ? "admin" : (u.cargo || "funcionario");
+  $("#usrFotoUrl").value = /^https?:/i.test(u.foto || "") ? u.foto : "";
+  $("#usrSenhaWrap").classList.add("hidden");
+  $("#usrFormTitulo").textContent = "Editando: " + (u.email || "");
+  renderAcessosCheck("#usrAcessos", u.acessos);
+  pintaAvatar("#usrAvatar", state.usrFoto, u.nome, u.email);
+  $("#view-usuarios").scrollIntoView({ behavior: "smooth" });
+}
+$("#usrCancel") && ($("#usrCancel").onclick = () => limparFormUsuario());
+
+$("#usrFotoFile") && ($("#usrFotoFile").onchange = async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  try {
+    state.usrFoto = await fileToBase64(f);
+    $("#usrFotoUrl").value = "";
+    pintaAvatar("#usrAvatar", state.usrFoto, $("#usrNome").value, $("#usrEmail").value);
+  } catch (err) { toast(err.message, true); }
+});
+$("#usrFotoUrl") && ($("#usrFotoUrl").oninput = () => {
+  const u = $("#usrFotoUrl").value.trim();
+  if (u) { state.usrFoto = u; pintaAvatar("#usrAvatar", u, $("#usrNome").value, $("#usrEmail").value); }
+});
+
+$("#usuarioForm") && $("#usuarioForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!isAdmin()) return toast("Somente o administrador pode cadastrar funcionários.", true);
+  const dados = {
+    nome: $("#usrNome").value.trim(),
+    sobrenome: $("#usrSobrenome").value.trim(),
+    whatsapp: $("#usrWhats").value.trim(),
+    email: $("#usrEmail").value.trim().toLowerCase(),
+    cargo: $("#usrCargo").value,
+    foto: state.usrFoto || "",
+    acessos: lerAcessos("#usrAcessos"),
+    ativo: true,
+  };
+  /* cargo administrador => acesso total ao sistema */
+  if (dados.cargo === "admin") dados.acessos = acessosTotais();
+  try {
+    if (state.editUser) {
+      if (ehUsuarioAdminMaster(state.usuarios[state.editUser])) {
+        dados.cargo = "admin"; dados.ativo = true; dados.acessos = acessosTotais();
+      }
+      const { email, ...resto } = dados;
+      await update(ref(db, "usuarios/" + state.editUser), resto);
+      toast("Funcionário atualizado.");
+    } else {
+      const senha = $("#usrSenha").value;
+      if (senha.length < 6) return toast("A senha deve ter ao menos 6 caracteres.", true);
+      loader(true, "Criando acesso do funcionário...");
+      const a2 = getSecondaryAuth();
+      const cred = await createUserWithEmailAndPassword(a2, dados.email, senha);
+      await set(ref(db, "usuarios/" + cred.user.uid), { ...dados, criadoEm: Date.now() });
+      await signOut(a2);
+      loader(false);
+      toast("Funcionário cadastrado com sucesso.");
+    }
+    limparFormUsuario();
+  } catch (err) {
+    loader(false);
+    toast(traduzErro(err.code) + (err.code ? "" : " " + err.message), true);
+  }
+});
+
+limparFormUsuario();

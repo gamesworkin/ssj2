@@ -234,3 +234,26 @@ tr.vencido td{background:color-mix(in srgb,var(--danger) 8%,transparent)}
   padding:.6rem .9rem;cursor:pointer;border-bottom:2px solid transparent}
 .tabs .tab:hover{color:var(--text)}
 .tabs .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+
+/* ============ Perfil e funcionários ============ */
+.avatar{width:96px;height:96px;border-radius:50%;overflow:hidden;flex:0 0 auto;
+  background:var(--panel-2);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;
+  font-size:2rem;font-weight:700;color:var(--muted)}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.perfil-head{align-items:center;gap:1rem}
+.grow{flex:1 1 220px}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.5rem}
+.tag{display:inline-block;padding:.15rem .55rem;border-radius:999px;border:1px solid var(--border);
+  background:var(--panel-2);font-size:.75rem;color:var(--muted)}
+.tag.ok{border-color:transparent;background:color-mix(in srgb,var(--primary) 22%,transparent);color:var(--primary)}
+.badge-user{display:flex;align-items:center;gap:.5rem}
+.badge-user small{display:block;color:var(--muted);font-size:.72rem}
+.badge-ava{width:32px;height:32px;border-radius:50%;overflow:hidden;background:var(--panel-2);
+  border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem}
+.badge-ava.sm{width:28px;height:28px}
+.badge-ava img{width:100%;height:100%;object-fit:cover}
+.chk{display:inline-flex;align-items:center;gap:.35rem;font-size:.85rem;color:var(--text);margin:.15rem .6rem .15rem 0}
+.chk input{width:auto}
+.btn.danger{border-color:var(--danger);color:var(--danger)}
+.small{font-size:.78rem;color:var(--muted)}

@@ -89,6 +89,8 @@
       <button class="nav-item" data-view="admin">⚙️ <span>Interface</span></button>
       <button class="nav-item" data-view="caixa">🛒 <span>Compra/Venda</span></button>
       <button class="nav-item" data-view="financeiro">💰 <span>Financeiro</span></button>
+      <button class="nav-item" data-view="perfil">👤 <span>Perfil</span></button>
+      <button class="nav-item hidden" data-view="usuarios">👥 <span>Funcionários</span></button>
       <div class="sidebar-foot"><span id="userBadge"></span></div>
     </nav>
     <div class="backdrop" id="sidebarBackdrop"></div>
@@ -148,7 +150,7 @@
           <th>Data/Hora</th><th>Tipo</th><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Total</th><th>Pessoa</th><th>Conta</th><th>Obs</th><th></th>
         </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
 
-        <div class="pager" id="lancPager"></div>
+        <div class="pager" id="tblLancPager"></div>
 
       </section>
 
@@ -204,7 +206,7 @@
         <h2 class="view-title">Relatórios</h2>
         <div class="panel filters">
           <div><label>Período</label><select id="relTipo">
-            <option value="diario">Diário</option><option value="mensal">Mensal</option><option value="anual">Anual</option>
+            <option value="diario">Diário</option><option value="semanal">Semanal</option><option value="mensal">Mensal</option><option value="anual">Anual</option>
           </select></div>
           <div><label>Referência</label><input type="date" id="relRef" /></div>
           <div><label>Movimentação</label><select id="relMovTipo">
@@ -500,18 +502,86 @@
 
         <h3 class="sub">Relatórios financeiros em PDF</h3>
         <div class="panel filters">
-          <div><label>Período</label><select id="relTipo">
-            <option value="dia">Diário</option><option value="mes" selected>Mensal</option><option value="ano">Anual</option>
+          <div><label>Período</label><select id="finRelTipo">
+            <option value="dia">Diário</option><option value="semana">Semanal</option><option value="mes" selected>Mensal</option><option value="ano">Anual</option>
           </select></div>
-          <div id="relCampoDia" class="hidden"><label>Dia</label><input type="date" id="relDia" /></div>
-          <div id="relCampoMes"><label>Mês</label><input type="month" id="relMes" /></div>
-          <div id="relCampoAno" class="hidden"><label>Ano</label><input type="number" id="relAno" min="2000" max="2100" step="1" /></div>
+          <div id="finRelCampoDia" class="hidden"><label>Dia</label><input type="date" id="finRelDia" /></div>
+          <div id="finRelCampoSemana" class="hidden"><label>Semana (dia de referência)</label><input type="date" id="finRelSemana" /></div>
+          <div id="finRelCampoMes"><label>Mês</label><input type="month" id="finRelMes" /></div>
+          <div id="finRelCampoAno" class="hidden"><label>Ano</label><input type="number" id="finRelAno" min="2000" max="2100" step="1" /></div>
           <div><label>Conta</label><select id="relConta"><option value="">Todas</option></select></div>
-          <div class="row gap end"><button class="btn primary" id="relPdf">Imprimir / salvar PDF</button></div>
+          <div class="row gap end"><button class="btn primary" id="finRelPdf">Imprimir / salvar PDF</button></div>
         </div>
       </section>
 
 
+
+      <!-- PERFIL -->
+      <section class="view hidden" id="view-perfil">
+        <h2 class="view-title">Meu perfil</h2>
+        <form id="perfilForm" class="panel grid-form">
+          <div class="full row gap perfil-head">
+            <div class="avatar" id="perfAvatar"></div>
+            <div class="grow">
+              <strong id="perfTituloNome">Dados pessoais</strong>
+              <p class="muted">Atualize seus dados de contato e sua foto de perfil.</p>
+              <div class="chips" id="perfAcessos"></div>
+            </div>
+          </div>
+
+          <div><label>Nome</label><input type="text" id="perfNome" required /></div>
+          <div><label>Sobrenome</label><input type="text" id="perfSobrenome" /></div>
+          <div><label>WhatsApp</label><input type="tel" id="perfWhats" inputmode="numeric" placeholder="(00) 00000-0000" /></div>
+          <div><label>E-mail (não editável)</label><input type="email" id="perfEmail" disabled /></div>
+          <div><label>Cargo (não editável)</label><input type="text" id="perfCargo" disabled /></div>
+          <div><label>Foto por link externo</label><input type="url" id="perfFotoUrl" placeholder="https://..." /></div>
+          <div><label>Foto por upload (convertida em base64)</label><input type="file" id="perfFotoFile" accept="image/*" /></div>
+
+          <div class="full row gap">
+            <button class="btn primary" type="submit">Salvar perfil</button>
+            <button class="btn ghost" type="button" id="perfFotoLimpar">Remover foto</button>
+            <button class="btn ghost" type="button" id="perfSenha">Alterar senha por e-mail</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- USUÁRIOS (ADMIN) -->
+      <section class="view hidden" id="view-usuarios">
+        <h2 class="view-title">Funcionários e acessos</h2>
+        <form id="usuarioForm" class="panel grid-form">
+          <div class="full row gap perfil-head">
+            <div class="avatar" id="usrAvatar"></div>
+            <div class="grow">
+              <strong id="usrFormTitulo">Novo funcionário</strong>
+              <p class="muted">Somente o administrador cadastra novos usuários e define os acessos.</p>
+            </div>
+          </div>
+
+          <div><label>Nome</label><input type="text" id="usrNome" required /></div>
+          <div><label>Sobrenome</label><input type="text" id="usrSobrenome" /></div>
+          <div><label>WhatsApp</label><input type="tel" id="usrWhats" inputmode="numeric" placeholder="(00) 00000-0000" /></div>
+          <div><label>E-mail de acesso</label><input type="email" id="usrEmail" required /></div>
+          <div id="usrSenhaWrap"><label>Senha inicial</label><input type="text" id="usrSenha" placeholder="mínimo 6 caracteres" /></div>
+          <div><label>Cargo</label><select id="usrCargo">
+            <option value="funcionario">Funcionário</option>
+            <option value="gerente">Gerente</option>
+            <option value="admin">Administrador</option>
+          </select></div>
+          <div><label>Foto por link externo</label><input type="url" id="usrFotoUrl" placeholder="https://..." /></div>
+          <div><label>Foto por upload (base64)</label><input type="file" id="usrFotoFile" accept="image/*" /></div>
+
+          <div class="full"><label>Acessos liberados</label><div class="chk-list" id="usrAcessos"></div></div>
+
+          <div class="full row gap">
+            <button class="btn primary" type="submit">Salvar funcionário</button>
+            <button class="btn ghost" type="button" id="usrCancel">Cancelar edição</button>
+          </div>
+        </form>
+
+        <div class="table-wrap"><table id="tblUsuarios"><thead><tr>
+          <th></th><th>Nome</th><th>E-mail</th><th>WhatsApp</th><th>Cargo</th><th>Situação</th><th>Acessos</th><th></th>
+        </tr></thead><tbody></tbody></table></div>
+      </section>
 
     </main>
   </div>
