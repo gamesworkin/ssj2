@@ -127,7 +127,15 @@
           <div><label id="lancPesoLbl">Peso (kg)</label><input type="number" step="0.001" min="0" id="lancPeso" required /></div>
           <div><label id="lancPrecoLbl">Preço por kg (R$)</label><input type="number" step="0.01" min="0" id="lancPreco" required /></div>
           <div><label>Fornecedor / Cliente</label><input type="text" id="lancPessoa" placeholder="Opcional" /></div>
-          <div><label>Conta / caixa</label><select id="lancConta"></select></div>
+          <div><label>Conta / caixa (pagamento principal)</label><select id="lancConta"></select></div>
+          <div><label>Valor nesta conta (R$)</label><input type="number" step="0.01" min="0" id="lancPagValor" placeholder="Total" /></div>
+          <div class="full"><label>Fracionamento do pagamento</label>
+            <div id="lancPagExtra" class="pag-extra"></div>
+            <div class="row gap">
+              <button type="button" class="btn mini" id="lancPagAdd">+ Fracionar em outra conta</button>
+              <span class="muted pag-resumo" id="lancPagResumo"></span>
+            </div>
+          </div>
           <div class="full"><label>Observação</label><input type="text" id="lancObs" placeholder="Opcional" /></div>
 
           <div class="full row gap">
@@ -314,7 +322,15 @@
             <option value="compra">Compra</option><option value="venda">Venda</option>
           </select></div>
           <div><label>Fornecedor / Cliente</label><input type="text" id="cxPessoa" placeholder="Opcional" /></div>
-          <div><label>Conta / caixa</label><select id="cxConta"></select></div>
+          <div><label>Conta / caixa (pagamento principal)</label><select id="cxConta"></select></div>
+          <div><label>Valor nesta conta (R$)</label><input type="number" step="0.01" min="0" id="cxPagValor" placeholder="Total" /></div>
+          <div class="full"><label>Fracionamento do pagamento</label>
+            <div id="cxPagExtra" class="pag-extra"></div>
+            <div class="row gap">
+              <button type="button" class="btn mini" id="cxPagAdd">+ Fracionar em outra conta</button>
+              <span class="muted pag-resumo" id="cxPagResumo"></span>
+            </div>
+          </div>
           <div class="full"><label>Observação da operação</label><input type="text" id="cxObs" placeholder="Opcional" /></div>
         </form>
 

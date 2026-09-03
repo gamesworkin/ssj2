@@ -74,6 +74,21 @@ function loader(on, text = "Carregando sistema...") {
 
 /* ------------------------------ estado ----------------------------------- */
 const state = { produtos: {}, lancamentos: {}, ajustes: {}, contas: {}, financeiro: {}, ui: {}, usuarios: {}, perfil: null, user: null, editLanc: null, editProd: null, editMov: null, editConta: null, editUser: null, fotoTmp: "", usrFoto: "", carrinho: [] };
+/* fracionamento de pagamentos: definidos cedo pois são usados pelos
+   renderizadores iniciais da tela */
+const cent = (v) => Math.round(num(v) * 100) / 100;
+const splitState = { lanc: [], cx: [] };
+const SPLIT_CFG = {
+  lanc: {
+    main: "#lancConta", mainVal: "#lancPagValor", wrap: "#lancPagExtra", resumo: "#lancPagResumo",
+    total: () => num($("#lancPeso").value) * num($("#lancPreco").value),
+  },
+  cx: {
+    main: "#cxConta", mainVal: "#cxPagValor", wrap: "#cxPagExtra", resumo: "#cxPagResumo",
+    total: () => state.carrinho.reduce((s, i) => s + num(i.total), 0),
+  },
+};
+
 const isAdmin = () => !!(state.user && (state.user.email === ADMIN_EMAIL || (state.perfil && state.perfil.cargo === "admin")));
 /* todos os acessos possiveis marcados (usado para o administrador) */
 function acessosTotais() {
@@ -439,7 +454,10 @@ function sugerirPreco() {
 }
 $("#lancProduto").onchange = sugerirPreco;
 $("#lancTipo").onchange = sugerirPreco;
-function calcTotal() { $("#lancTotal").textContent = "Total: " + money(num($("#lancPeso").value) * num($("#lancPreco").value)); }
+function calcTotal() {
+  $("#lancTotal").textContent = "Total: " + money(num($("#lancPeso").value) * num($("#lancPreco").value));
+  if (typeof atualizaSplit === "function") atualizaSplit("lanc");
+}
 $("#lancPeso").oninput = calcTotal;
 $("#lancPreco").oninput = calcTotal;
 
@@ -448,6 +466,8 @@ $("#lancData").value = toInputDT(new Date());
 $("#lancForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!guard()) return;
+  const pg = coletaPagamentos("lanc");
+  if (pg.erro) return toast(pg.erro, true);
   const l = {
     data: new Date($("#lancData").value).toISOString(),
     tipo: $("#lancTipo").value,
@@ -458,7 +478,8 @@ $("#lancForm").addEventListener("submit", async (e) => {
     preco: num($("#lancPreco").value),
     total: num($("#lancPeso").value) * num($("#lancPreco").value),
     pessoa: $("#lancPessoa").value.trim(),
-    contaId: $("#lancConta").value || contaPadraoId(),
+    contaId: pg.lista[0].contaId,
+    pagamentos: pg.lista,
     obs: $("#lancObs").value.trim(),
     criadoEm: Date.now(),
   };
@@ -469,10 +490,11 @@ $("#lancForm").addEventListener("submit", async (e) => {
   state.editLanc = null;
   $("#lancPeso").value = ""; $("#lancPessoa").value = ""; $("#lancObs").value = "";
   $("#lancData").value = toInputDT(new Date());
+  limpaSplit("lanc");
   calcTotal();
   toast("Lançamento salvo.");
 });
-$("#lancCancel").onclick = () => { state.editLanc = null; $("#lancForm").reset(); $("#lancData").value = toInputDT(new Date()); fillContaSelects(); };
+$("#lancCancel").onclick = () => { state.editLanc = null; $("#lancForm").reset(); $("#lancData").value = toInputDT(new Date()); fillContaSelects(); limpaSplit("lanc"); calcTotal(); };
 
 
 ["#fDe", "#fAte", "#fProduto", "#fTipo", "#fBusca"].forEach((s) => {
@@ -582,7 +604,7 @@ function renderLancamentos() {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${dtLocal(l.data)}</td><td><span class="tag ${l.tipo}">${l.tipo}</span></td>
       <td>${l.produtoNome || prodNome(l.produtoId)}</td><td>${qtd(l.peso, unidDe(l))}</td><td>${money(l.preco)}</td>
-      <td>${money(l.total)}</td><td>${l.pessoa || "-"}</td><td>${contaNome(l.contaId || contaPadraoId())}</td><td>${l.obs || "-"}</td>
+      <td>${money(l.total)}</td><td>${l.pessoa || "-"}</td><td>${pagamentosResumo(l)}</td><td>${l.obs || "-"}</td>
       <td><button class="btn mini" data-e="${l.id}">Editar</button>
           <button class="btn mini danger" data-d="${l.id}">Excluir</button></td>`;
     tb.appendChild(tr);
@@ -601,7 +623,11 @@ function renderLancamentos() {
     $("#lancData").value = toInputDT(new Date(l.data)); $("#lancTipo").value = l.tipo;
     $("#lancProduto").value = l.produtoId; rotulosLanc(); $("#lancPeso").value = l.peso;
     $("#lancPreco").value = l.preco; $("#lancPessoa").value = l.pessoa || ""; $("#lancObs").value = l.obs || "";
-    $("#lancConta").value = l.contaId && state.contas[l.contaId] ? l.contaId : contaPadraoId();
+    const pl = pagamentosDe(l);
+    $("#lancConta").value = pl[0].contaId && state.contas[pl[0].contaId] ? pl[0].contaId : contaPadraoId();
+    $("#lancPagValor").value = pl.length > 1 ? pl[0].valor : "";
+    splitState.lanc = pl.slice(1).map((p) => ({ contaId: p.contaId, valor: p.valor }));
+    renderSplit("lanc");
     calcTotal(); window.scrollTo({ top: 0, behavior: "smooth" });
   }));
 
@@ -857,12 +883,12 @@ $("#expJson").onclick = () => {
 };
 $("#expCsv").onclick = () => {
   const d = dumpAtual();
-  const rows = [["Data", "Tipo", "Produto", "Unidade", "Quantidade", "Preco unitario", "Total", "Pessoa", "Obs"]];
+  const rows = [["Data", "Tipo", "Produto", "Unidade", "Quantidade", "Preco unitario", "Total", "Pagamentos", "Pessoa", "Obs"]];
   Object.values(d.lancamentos || {})
     .sort((a, b) => new Date(a.data) - new Date(b.data))
     .forEach((l) => rows.push([dtLocal(l.data), l.tipo, l.produtoNome || prodNome(l.produtoId), unidDe(l),
       unidDe(l) === "un" ? String(num(l.peso)) : num(l.peso).toFixed(3),
-      num(l.preco).toFixed(2), num(l.total).toFixed(2), l.pessoa || "", l.obs || ""]));
+      num(l.preco).toFixed(2), num(l.total).toFixed(2), pagamentosResumo(l), l.pessoa || "", l.obs || ""]));
   baixar(csv(rows), `lancamentos-${Date.now()}.csv`, "text/csv");
 };
 $("#impBtn").onclick = async () => {
@@ -974,6 +1000,7 @@ function renderCarrinho() {
   $("#cxTotUn").textContent = un(unT) + " un";
   $("#cxTotItens").textContent = String(state.carrinho.length);
   $("#cxTotValor").textContent = money(state.carrinho.reduce((s, i) => s + num(i.total), 0));
+  if (typeof atualizaSplit === "function") atualizaSplit("cx");
 }
 renderCarrinho();
 
@@ -992,13 +1019,19 @@ $("#cxFinalizar").onclick = async () => {
   const tipo = $("#cxTipo").value;
   const pessoa = $("#cxPessoa").value.trim();
   const obsGeral = $("#cxObs").value.trim();
-  const contaId = ($("#cxConta") && $("#cxConta").value) || contaPadraoId();
+  const pg = coletaPagamentos("cx");
+  if (pg.erro) return toast(pg.erro, true);
+  const pagamentos = pg.lista;
+  const contaId = pagamentos[0].contaId;
   if (!contaId) return toast("Cadastre uma conta/caixa no Financeiro antes de lançar.", true);
   const agora = Date.now();
   const opId = "op" + agora;
+  /* o fracionamento da operação é distribuído entre os itens do carrinho */
+  const rateio = ratearPagamentos(state.carrinho, pagamentos);
   try {
     /* cada item vira um lançamento independente, igual ao cadastro manual */
-    for (const it of state.carrinho) {
+    for (let i = 0; i < state.carrinho.length; i++) {
+      const it = state.carrinho[i];
       await push(ref(db, "lancamentos"), {
         data: dataISO,
         tipo,
@@ -1009,16 +1042,18 @@ $("#cxFinalizar").onclick = async () => {
         preco: it.preco,
         total: it.total,
         pessoa,
-        contaId,
+        contaId: (rateio[i][0] || {}).contaId || contaId,
+        pagamentos: rateio[i],
         obs: [obsGeral, it.obs].filter(Boolean).join(" | "),
         operacaoId: opId,
         criadoEm: agora,
       });
     }
     const n = state.carrinho.length;
-    state.ultimaOperacao = { data: dataISO, tipo, pessoa, obs: obsGeral, contaId, itens: state.carrinho.slice() };
+    state.ultimaOperacao = { data: dataISO, tipo, pessoa, obs: obsGeral, contaId, pagamentos, itens: state.carrinho.slice() };
     state.carrinho = [];
     renderCarrinho();
+    limpaSplit("cx");
     $("#cxPessoa").value = ""; $("#cxObs").value = "";
     $("#cxData").value = toInputDT(new Date());
     toast(`${n} lançamento(s) registrado(s) com sucesso.`);
@@ -1074,6 +1109,145 @@ function contaPadraoId() {
 }
 function contaNome(id) { return state.contas[id] ? state.contas[id].nome : (id ? "(conta removida)" : "Sem conta"); }
 
+/* ============================ PAGAMENTOS FRACIONADOS ======================
+   Uma compra/venda pode ser paga em mais de uma conta/caixa (ex.: R$ 10 no
+   Pix e R$ 20 em espécie). O lançamento guarda `pagamentos: [{contaId,valor}]`
+   e mantém `contaId` (conta principal) para compatibilidade com registros
+   antigos, que continuam funcionando exatamente como antes.
+   ======================================================================== */
+
+function pagamentosDe(o) {
+  const total = cent(o && o.total);
+  const lista = Array.isArray(o && o.pagamentos) ? o.pagamentos : null;
+  if (lista) {
+    const val = lista
+      .map((p) => ({ contaId: p.contaId || contaPadraoId(), valor: cent(p.valor) }))
+      .filter((p) => p.valor > 0);
+    if (val.length) return val;
+  }
+  return [{ contaId: (o && o.contaId) || contaPadraoId(), valor: total }];
+}
+function pagamentosResumo(o) {
+  const l = pagamentosDe(o);
+  if (l.length === 1) return contaNome(l[0].contaId);
+  return l.map((p) => `${contaNome(p.contaId)}: ${money(p.valor)}`).join(" \u00b7 ");
+}
+/* distribui os pagamentos da operação entre os itens, sem sobra de centavos */
+function ratearPagamentos(itens, pagamentos) {
+  const restos = pagamentos.map((p) => ({ contaId: p.contaId, resta: cent(p.valor) }));
+  return itens.map((it) => {
+    let falta = cent(it.total);
+    const out = [];
+    const soma = (contaId, valor) => {
+      const ja = out.find((x) => x.contaId === contaId);
+      if (ja) ja.valor = cent(ja.valor + valor);
+      else out.push({ contaId, valor: cent(valor) });
+    };
+    for (const r of restos) {
+      if (falta <= 0) break;
+      if (r.resta <= 0) continue;
+      const usa = cent(Math.min(r.resta, falta));
+      r.resta = cent(r.resta - usa);
+      falta = cent(falta - usa);
+      soma(r.contaId, usa);
+    }
+    if (falta > 0) soma((restos[restos.length - 1] || {}).contaId || contaPadraoId(), falta);
+    return out.length ? out : [{ contaId: (restos[0] || {}).contaId || contaPadraoId(), valor: cent(it.total) }];
+  });
+}
+
+/* ---- interface de fracionamento (Lançamentos e Compra/Venda) ------------- */
+function renderSplit(key) {
+  const cfg = SPLIT_CFG[key];
+  const wrap = $(cfg.wrap);
+  if (!wrap) return;
+  const opts = contasArray().map((c) => `<option value="${c.id}">${escDoc(c.nome)}</option>`).join("");
+  wrap.innerHTML = splitState[key].map((p, i) => `<div class="pag-row">
+      <select data-sp="${key}" data-i="${i}">${opts}</select>
+      <input type="number" step="0.01" min="0" data-spv="${key}" data-i="${i}" placeholder="0,00" value="${p.valor === "" || p.valor == null ? "" : p.valor}" />
+      <button type="button" class="btn mini danger" data-spr="${key}" data-i="${i}">Remover</button>
+    </div>`).join("");
+  splitState[key].forEach((p, i) => {
+    const sel = wrap.querySelector(`select[data-sp="${key}"][data-i="${i}"]`);
+    if (!sel) return;
+    sel.value = p.contaId && state.contas[p.contaId] ? p.contaId : contaPadraoId();
+    p.contaId = sel.value;
+  });
+  wrap.querySelectorAll("[data-sp]").forEach((sel) => (sel.onchange = () => {
+    splitState[key][Number(sel.dataset.i)].contaId = sel.value; atualizaSplit(key);
+  }));
+  wrap.querySelectorAll("[data-spv]").forEach((inp) => (inp.oninput = () => {
+    splitState[key][Number(inp.dataset.i)].valor = inp.value; atualizaSplit(key);
+  }));
+  wrap.querySelectorAll("[data-spr]").forEach((b) => (b.onclick = () => {
+    splitState[key].splice(Number(b.dataset.i), 1); renderSplit(key);
+  }));
+  atualizaSplit(key);
+}
+function atualizaSplit(key) {
+  const cfg = SPLIT_CFG[key];
+  const el = $(cfg.resumo);
+  if (!el) return;
+  const total = cent(cfg.total());
+  const extras = cent(splitState[key].reduce((s, p) => s + num(p.valor), 0));
+  const mainEl = $(cfg.mainVal);
+  const informado = mainEl && String(mainEl.value).trim() !== "" ? cent(mainEl.value) : null;
+  if (mainEl) mainEl.placeholder = money(Math.max(0, cent(total - extras)));
+  el.className = "muted pag-resumo";
+  if (!splitState[key].length && informado === null) {
+    el.textContent = total > 0 ? `Total ${money(total)} em uma única conta.` : "";
+    return;
+  }
+  if (informado === null) {
+    el.textContent = `Total ${money(total)} · outras contas ${money(extras)} · conta principal ${money(Math.max(0, cent(total - extras)))}`;
+    return;
+  }
+  const dif = cent(total - cent(extras + informado));
+  if (Math.abs(dif) < 0.005) el.textContent = `Fracionamento conferido: ${money(total)} distribuídos.`;
+  else if (dif > 0) { el.className = "muted pag-resumo alerta"; el.textContent = `Faltam ${money(dif)} para fechar o total de ${money(total)}.`; }
+  else { el.className = "muted pag-resumo alerta"; el.textContent = `Excedeu ${money(-dif)} em relação ao total de ${money(total)}.`; }
+}
+function coletaPagamentos(key) {
+  const cfg = SPLIT_CFG[key];
+  const total = cent(cfg.total());
+  const mainEl = $(cfg.mainVal);
+  const mainConta = ($(cfg.main) && $(cfg.main).value) || contaPadraoId();
+  const extras = splitState[key]
+    .map((p) => ({ contaId: p.contaId || contaPadraoId(), valor: cent(p.valor) }))
+    .filter((p) => p.valor > 0);
+  const somaExtras = cent(extras.reduce((s, p) => s + p.valor, 0));
+  const informado = mainEl && String(mainEl.value).trim() !== "" ? cent(mainEl.value) : null;
+  const mainValor = informado === null ? cent(total - somaExtras) : informado;
+  const lista = [];
+  const soma = (contaId, valor) => {
+    const ja = lista.find((x) => x.contaId === contaId);
+    if (ja) ja.valor = cent(ja.valor + valor);
+    else lista.push({ contaId, valor: cent(valor) });
+  };
+  if (mainValor > 0) soma(mainConta, mainValor);
+  extras.forEach((p) => soma(p.contaId, p.valor));
+  if (!lista.length || lista.some((p) => !p.contaId)) {
+    return { erro: "Cadastre uma conta/caixa no Financeiro e informe os valores do pagamento." };
+  }
+  const soma1 = cent(lista.reduce((s, p) => s + p.valor, 0));
+  if (Math.abs(soma1 - total) > 0.005) {
+    return { erro: `A soma dos pagamentos (${money(soma1)}) não fecha com o total (${money(total)}).` };
+  }
+  return { lista };
+}
+function limpaSplit(key) {
+  splitState[key] = [];
+  const cfg = SPLIT_CFG[key];
+  if ($(cfg.mainVal)) $(cfg.mainVal).value = "";
+  renderSplit(key);
+}
+if ($("#lancPagAdd")) $("#lancPagAdd").onclick = () => { splitState.lanc.push({ contaId: contaPadraoId(), valor: "" }); renderSplit("lanc"); };
+if ($("#cxPagAdd")) $("#cxPagAdd").onclick = () => { splitState.cx.push({ contaId: contaPadraoId(), valor: "" }); renderSplit("cx"); };
+if ($("#lancPagValor")) $("#lancPagValor").oninput = () => atualizaSplit("lanc");
+if ($("#cxPagValor")) $("#cxPagValor").oninput = () => atualizaSplit("cx");
+if ($("#lancConta")) $("#lancConta").addEventListener("change", () => atualizaSplit("lanc"));
+if ($("#cxConta")) $("#cxConta").addEventListener("change", () => atualizaSplit("cx"));
+
 function fillContaSelects() {
   const opts = contasArray().map((c) => `<option value="${c.id}">${c.nome}</option>`).join("");
   const padrao = contaPadraoId();
@@ -1094,6 +1268,7 @@ function fillContaSelects() {
     f.innerHTML = `<option value="">Todas</option>` + opts;
     if (atualF && state.contas[atualF]) f.value = atualF;
   });
+  if (typeof renderSplit === "function") { renderSplit("lanc"); renderSplit("cx"); }
 }
 
 
@@ -1124,21 +1299,28 @@ $("#finContaCancel").onclick = () => { state.editConta = null; $("#finContaForm"
 /* Movimentos operacionais são derivados automaticamente dos lançamentos de
    compra e venda, então nunca ficam fora de sincronia com o estoque.        */
 function movimentosOperacionais() {
-  const padrao = contaPadraoId();
-  return Object.entries(state.lancamentos).map(([id, l]) => ({
-    id: "op:" + id,
-    origem: "operacional",
-    data: l.data,
-    tipo: l.tipo === "venda" ? "entrada" : "saida",
-    categoria: l.tipo === "venda" ? "Venda de material" : "Compra de material",
-    contaId: l.contaId || padrao,
-    valor: num(l.total),
-    forma: "dinheiro",
-    status: "pago",
-    pessoa: l.pessoa || "",
-    desc: `${l.tipo === "venda" ? "Venda" : "Compra"} de ${l.produtoNome || prodNome(l.produtoId)} (${qtd(l.peso, unidDe(l))})`,
-    lancamentoId: id,
-  }));
+  const out = [];
+  Object.entries(state.lancamentos).forEach(([id, l]) => {
+    const pags = pagamentosDe(l);
+    pags.forEach((p, i) => {
+      out.push({
+        id: "op:" + id + (pags.length > 1 ? ":" + i : ""),
+        origem: "operacional",
+        data: l.data,
+        tipo: l.tipo === "venda" ? "entrada" : "saida",
+        categoria: l.tipo === "venda" ? "Venda de material" : "Compra de material",
+        contaId: p.contaId,
+        valor: num(p.valor),
+        forma: "dinheiro",
+        status: "pago",
+        pessoa: l.pessoa || "",
+        desc: `${l.tipo === "venda" ? "Venda" : "Compra"} de ${l.produtoNome || prodNome(l.produtoId)} (${qtd(l.peso, unidDe(l))})`
+          + (pags.length > 1 ? ` — parte em ${contaNome(p.contaId)} de ${money(l.total)}` : ""),
+        lancamentoId: id,
+      });
+    });
+  });
+  return out;
 }
 function movimentosManuais() {
   return Object.entries(state.financeiro).map(([id, m]) => ({ id, origem: "manual", ...m }));
@@ -1578,6 +1760,9 @@ const empresaNome = () => (state.ui && state.ui.brand) || "Sistema Gerencial";
 function reciboHTML(op) {
   const titulo = op.tipo === "venda" ? "Recibo de venda" : "Recibo de compra";
   const totalGeral = op.itens.reduce((s, i) => s + num(i.total), 0);
+  const pags = (Array.isArray(op.pagamentos) && op.pagamentos.length)
+    ? op.pagamentos.map((p) => ({ contaId: p.contaId, valor: cent(p.valor) })).filter((p) => p.valor > 0)
+    : [{ contaId: op.contaId, valor: cent(totalGeral) }];
   const tKg = op.itens.filter((i) => (i.unidade || "kg") !== "un").reduce((s, i) => s + num(i.peso), 0);
   const tUn = op.itens.filter((i) => (i.unidade || "kg") === "un").reduce((s, i) => s + num(i.peso), 0);
   const linhas = op.itens.map((i) => `<tr>
@@ -1590,7 +1775,7 @@ function reciboHTML(op) {
 <h2>${titulo} — ${escDoc(dtLocal(op.data))}</h2>
 <div class="kpis">
   <div class="kpi"><span>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</span><strong>${escDoc(op.pessoa || "Não informado")}</strong></div>
-  <div class="kpi"><span>Conta / caixa</span><strong>${escDoc(contaNome(op.contaId))}</strong></div>
+  <div class="kpi"><span>Conta / caixa</span><strong>${escDoc(pags.map((p) => contaNome(p.contaId)).join(" \u00b7 "))}</strong></div>
   <div class="kpi"><span>Itens</span><strong>${op.itens.length}</strong></div>
   <div class="kpi"><span>Quantidade</span><strong>${dual(tKg, tUn)}</strong></div>
   <div class="kpi"><span>Valor total</span><strong>${money(totalGeral)}</strong></div>
@@ -1599,6 +1784,10 @@ function reciboHTML(op) {
 <table><thead><tr><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Subtotal</th><th>Obs</th></tr></thead>
 <tbody>${linhas}</tbody>
 <tfoot><tr><td colspan="3">Total</td><td class="r">${money(totalGeral)}</td><td></td></tr></tfoot></table>
+${pags.length > 1 ? `<h3>Formas de pagamento</h3>
+<table><thead><tr><th>Conta / caixa</th><th class="r">Valor</th></tr></thead>
+<tbody>${pags.map((p) => `<tr><td>${escDoc(contaNome(p.contaId))}</td><td class="r">${money(p.valor)}</td></tr>`).join("")}</tbody>
+<tfoot><tr><td>Total</td><td class="r">${money(pags.reduce((s, p) => s + num(p.valor), 0))}</td></tr></tfoot></table>` : ""}
 ${op.obs ? `<p><strong>Observação:</strong> ${escDoc(op.obs)}</p>` : ""}
 <div class="assinatura"><div>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</div><div>${escDoc(empresaNome())}</div></div>
 <p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`;
@@ -1612,6 +1801,7 @@ if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
       pessoa: $("#cxPessoa").value.trim(),
       obs: $("#cxObs").value.trim(),
       contaId: ($("#cxConta") && $("#cxConta").value) || contaPadraoId(),
+      pagamentos: (coletaPagamentos("cx").lista || null),
       itens: state.carrinho.slice(),
     };
   } else if (state.ultimaOperacao) {

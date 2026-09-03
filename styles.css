@@ -257,3 +257,13 @@ tr.vencido td{background:color-mix(in srgb,var(--danger) 8%,transparent)}
 .chk input{width:auto}
 .btn.danger{border-color:var(--danger);color:var(--danger)}
 .small{font-size:.78rem;color:var(--muted)}
+
+/* ---------- fracionamento de pagamento (compras / vendas) ---------- */
+.pag-extra{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.5rem}
+.pag-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(100px,140px) auto;gap:.5rem;align-items:center}
+.pag-resumo{font-size:.82rem}
+.pag-resumo.alerta{color:var(--danger)}
+@media (max-width:620px){
+  .pag-row{grid-template-columns:1fr 1fr;grid-auto-flow:row}
+  .pag-row button{grid-column:1 / -1}
+}
