@@ -378,6 +378,24 @@
           </div>
           <p class="muted">O recibo usa os itens do carrinho atual ou a última operação finalizada.</p>
         </div>
+
+        <div class="panel" id="cxHistPanel">
+          <h3 class="sub">Histórico de operações</h3>
+          <div class="filters">
+            <div><label>De</label><input type="date" id="hoDe" /></div>
+            <div><label>Até</label><input type="date" id="hoAte" /></div>
+            <div><label>Tipo</label><select id="hoTipo">
+              <option value="">Compras e vendas</option>
+              <option value="compra">Somente compras</option>
+              <option value="venda">Somente vendas</option>
+            </select></div>
+            <div><label>Fornecedor / Cliente</label><input type="text" id="hoBusca" placeholder="Buscar" /></div>
+          </div>
+          <div class="table-wrap"><table id="tblHistOp"><thead><tr>
+            <th>Data</th><th>Tipo</th><th>Fornecedor / Cliente</th><th>Itens</th><th>Qtd.</th><th>Valor total</th><th>Pagamento</th><th></th>
+          </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
+          <div class="pager" id="tblHistOpPager"></div>
+        </div>
         </div>
 
         <div id="cxPaneSim" class="hidden">

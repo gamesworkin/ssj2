@@ -1005,6 +1005,7 @@ function renderCarrinho() {
 renderCarrinho();
 
 $("#cxLimpar").onclick = () => {
+  if (state.editOp) { cancelarEdicaoOp(); return; }
   if (!state.carrinho.length) return;
   if (!confirm("Limpar todos os itens do carrinho?")) return;
   state.carrinho = [];
@@ -1025,10 +1026,16 @@ $("#cxFinalizar").onclick = async () => {
   const contaId = pagamentos[0].contaId;
   if (!contaId) return toast("Cadastre uma conta/caixa no Financeiro antes de lançar.", true);
   const agora = Date.now();
-  const opId = "op" + agora;
+  const editando = state.editOp || null;
+  const opId = editando || ("op" + agora);
+  const antigos = editando ? opLancamentos(editando) : [];
+  const criadoEm = antigos.length ? (antigos[0].criadoEm || agora) : agora;
+  if (editando && !confirm("Salvar as alterações desta operação?")) return;
   /* o fracionamento da operação é distribuído entre os itens do carrinho */
   const rateio = ratearPagamentos(state.carrinho, pagamentos);
   try {
+    /* edição: remove os lançamentos antigos da operação antes de regravar */
+    for (const l of antigos) await remove(ref(db, "lancamentos/" + l.id));
     /* cada item vira um lançamento independente, igual ao cadastro manual */
     for (let i = 0; i < state.carrinho.length; i++) {
       const it = state.carrinho[i];
@@ -1045,8 +1052,11 @@ $("#cxFinalizar").onclick = async () => {
         contaId: (rateio[i][0] || {}).contaId || contaId,
         pagamentos: rateio[i],
         obs: [obsGeral, it.obs].filter(Boolean).join(" | "),
+        opObs: obsGeral,
+        itemObs: it.obs || "",
         operacaoId: opId,
-        criadoEm: agora,
+        criadoEm: criadoEm,
+        ...(editando ? { editadoEm: agora } : {}),
       });
     }
     const n = state.carrinho.length;
@@ -1056,7 +1066,8 @@ $("#cxFinalizar").onclick = async () => {
     limpaSplit("cx");
     $("#cxPessoa").value = ""; $("#cxObs").value = "";
     $("#cxData").value = toInputDT(new Date());
-    toast(`${n} lançamento(s) registrado(s) com sucesso.`);
+    state.editOp = null; atualizaModoEdicaoOp();
+    toast(editando ? "Operação atualizada com sucesso." : `${n} lançamento(s) registrado(s) com sucesso.`);
   } catch (err) {
     toast("Falha ao finalizar: " + err.message, true);
   }
@@ -1069,6 +1080,7 @@ function renderAll() {
   renderEstoque();
   renderRelatorio();
   renderFinanceiro();
+  renderHistOp();
 }
 
 /* ========================================================================== */
@@ -1811,6 +1823,171 @@ if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
   }
   abrirDoc("Recibo", reciboHTML(op));
 };
+
+
+/* ======================= HISTÓRICO DE OPERAÇÕES =========================== */
+/* agrupa os lançamentos gerados pelo carrinho (mesmo operacaoId) */
+function opLancamentos(opId) {
+  return Object.entries(state.lancamentos || {})
+    .filter(([, l]) => l && l.operacaoId === opId)
+    .map(([id, l]) => ({ id, ...l }));
+}
+function operacoesArray() {
+  const map = {};
+  for (const [id, l] of Object.entries(state.lancamentos || {})) {
+    if (!l || !l.operacaoId) continue;
+    const op = map[l.operacaoId] = map[l.operacaoId] || {
+      id: l.operacaoId, data: l.data, tipo: l.tipo, pessoa: l.pessoa || "",
+      obs: l.opObs != null ? l.opObs : "", contaId: l.contaId, itens: [], lancs: [], pagMap: {},
+    };
+    op.lancs.push(id);
+    op.itens.push({
+      produtoId: l.produtoId, produtoNome: l.produtoNome || prodNome(l.produtoId),
+      unidade: unidDe(l), peso: num(l.peso), preco: num(l.preco), total: num(l.total),
+      obs: l.itemObs != null ? l.itemObs : (l.obs || ""),
+    });
+    for (const p of pagamentosDe(l)) {
+      op.pagMap[p.contaId || ""] = (op.pagMap[p.contaId || ""] || 0) + num(p.valor);
+    }
+  }
+  return Object.values(map).map((op) => {
+    op.pagamentos = Object.entries(op.pagMap).map(([contaId, valor]) => ({ contaId, valor: cent(valor) }));
+    if (op.pagamentos[0]) op.contaId = op.pagamentos[0].contaId;
+    op.total = op.itens.reduce((s, i) => s + num(i.total), 0);
+    return op;
+  }).sort((a, b) => new Date(b.data) - new Date(a.data));
+}
+function filtraHistOp(list) {
+  const de = $("#hoDe").value, ate = $("#hoAte").value, tipo = $("#hoTipo").value;
+  const busca = $("#hoBusca").value.trim().toLowerCase();
+  return list.filter((op) => {
+    const d = dayKey(op.data);
+    if (de && d < de) return false;
+    if (ate && d > ate) return false;
+    if (tipo && op.tipo !== tipo) return false;
+    if (busca && !String(op.pessoa || "").toLowerCase().includes(busca)) return false;
+    return true;
+  });
+}
+function renderHistOp() {
+  const tbl = $("#tblHistOp"); if (!tbl) return;
+  const rows = filtraHistOp(operacoesArray());
+  const tb = tbl.querySelector("tbody"); tb.innerHTML = "";
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="8" class="empty">Nenhuma operação encontrada.</td></tr>`;
+    tbl.querySelector("tfoot").innerHTML = "";
+    renderPager("tblHistOp", "histOp", 0, renderHistOp, "operação(ões)");
+    return;
+  }
+  const pagina = paginar("histOp", rows);
+  for (const op of pagina) {
+    const tKg = op.itens.filter((i) => i.unidade !== "un").reduce((s, i) => s + num(i.peso), 0);
+    const tUn = op.itens.filter((i) => i.unidade === "un").reduce((s, i) => s + num(i.peso), 0);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${dtLocal(op.data)}</td><td><span class="tag ${op.tipo}">${op.tipo}</span>${state.editOp === op.id ? ' <small class="muted">(em edição)</small>' : ""}</td>
+      <td>${escDoc(op.pessoa || "-")}</td><td>${op.itens.length}</td><td>${dual(tKg, tUn)}</td>
+      <td>${money(op.total)}</td><td>${escDoc(op.pagamentos.map((p) => contaNome(p.contaId)).join(" · "))}</td>
+      <td style="white-space:nowrap"><button class="btn mini" data-hv="${op.id}">Ver</button>
+          <button class="btn mini" data-hp="${op.id}">Recibo</button>
+          <button class="btn mini" data-he="${op.id}">Editar</button>
+          <button class="btn mini danger" data-hd="${op.id}">Excluir</button></td>`;
+    tb.appendChild(tr);
+  }
+  const tC = rows.filter((o) => o.tipo === "compra").reduce((s, o) => s + o.total, 0);
+  const tV = rows.filter((o) => o.tipo === "venda").reduce((s, o) => s + o.total, 0);
+  tbl.querySelector("tfoot").innerHTML = `<tr><td colspan="3">${rows.length} operação(ões) · exibindo ${pagina.length}</td>
+    <td colspan="2">Compras: ${money(tC)}</td><td colspan="3">Vendas: ${money(tV)}</td></tr>`;
+  renderPager("tblHistOp", "histOp", rows.length, renderHistOp, "operação(ões)");
+
+  const acha = (id) => rows.find((o) => o.id === id);
+  tb.querySelectorAll("[data-hv]").forEach((b) => (b.onclick = () => verOperacao(acha(b.dataset.hv))));
+  tb.querySelectorAll("[data-hp]").forEach((b) => (b.onclick = () => abrirDoc("Recibo", reciboHTML(acha(b.dataset.hp)))));
+  tb.querySelectorAll("[data-he]").forEach((b) => (b.onclick = () => editarOperacao(acha(b.dataset.he))));
+  tb.querySelectorAll("[data-hd]").forEach((b) => (b.onclick = () => excluirOperacao(acha(b.dataset.hd))));
+}
+["hoDe", "hoAte", "hoTipo"].forEach((id) => { if ($("#" + id)) $("#" + id).onchange = () => { resetPagina("histOp"); renderHistOp(); }; });
+if ($("#hoBusca")) $("#hoBusca").oninput = () => { resetPagina("histOp"); renderHistOp(); };
+
+function verOperacao(op) {
+  if (!op) return;
+  const bd = document.createElement("div");
+  bd.className = "modal-backdrop open";
+  bd.innerHTML = `<div class="modal" style="max-width:760px;width:95%">
+    <h2>${op.tipo === "venda" ? "Venda" : "Compra"} — ${dtLocal(op.data)}</h2>
+    <p class="muted">${op.tipo === "venda" ? "Cliente" : "Fornecedor"}: ${escDoc(op.pessoa || "Não informado")}
+      · Pagamento: ${escDoc(op.pagamentos.map((p) => contaNome(p.contaId) + " " + money(p.valor)).join(" · "))}</p>
+    ${op.obs ? `<p class="muted">Obs: ${escDoc(op.obs)}</p>` : ""}
+    <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Qtd.</th><th>Preço unit.</th><th>Subtotal</th><th>Obs</th></tr></thead>
+    <tbody>${op.itens.map((i) => `<tr><td>${escDoc(i.produtoNome)}</td><td>${qtd(i.peso, i.unidade)}</td><td>${money(i.preco)}</td><td>${money(i.total)}</td><td>${escDoc(i.obs || "-")}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td colspan="3">Total</td><td colspan="2">${money(op.total)}</td></tr></tfoot></table></div>
+    <div class="row gap" style="margin-top:1rem">
+      <button class="btn primary" data-a="p">Imprimir recibo</button>
+      <button class="btn" data-a="e">Editar</button>
+      <button class="btn danger" data-a="d">Excluir</button>
+      <button class="btn ghost end" data-a="x">Fechar</button>
+    </div></div>`;
+  const fecha = () => bd.remove();
+  bd.onclick = (e) => { if (e.target === bd) fecha(); };
+  bd.querySelector('[data-a="p"]').onclick = () => abrirDoc("Recibo", reciboHTML(op));
+  bd.querySelector('[data-a="e"]').onclick = () => { fecha(); editarOperacao(op); };
+  bd.querySelector('[data-a="d"]').onclick = async () => { if (await excluirOperacao(op)) fecha(); };
+  bd.querySelector('[data-a="x"]').onclick = fecha;
+  document.body.appendChild(bd);
+}
+
+function editarOperacao(op) {
+  if (!op || !guard()) return;
+  if (state.carrinho.length && !state.editOp && !confirm("O carrinho atual será substituído pelos itens desta operação. Continuar?")) return;
+  state.editOp = op.id;
+  state.carrinho = op.itens.map((i) => ({ ...i }));
+  $("#cxData").value = toInputDT(new Date(op.data));
+  $("#cxTipo").value = op.tipo;
+  $("#cxPessoa").value = op.pessoa || "";
+  $("#cxObs").value = op.obs || "";
+  const pl = op.pagamentos.length ? op.pagamentos : [{ contaId: contaPadraoId(), valor: op.total }];
+  if ($("#cxConta")) $("#cxConta").value = pl[0].contaId && state.contas[pl[0].contaId] ? pl[0].contaId : contaPadraoId();
+  if ($("#cxPagValor")) $("#cxPagValor").value = pl.length > 1 ? pl[0].valor : "";
+  splitState.cx = pl.slice(1).map((p) => ({ contaId: p.contaId, valor: p.valor }));
+  renderSplit("cx");
+  rotulosCaixa();
+  renderCarrinho();
+  atualizaModoEdicaoOp();
+  renderHistOp();
+  $("#cxCabForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  toast("Operação carregada no carrinho para edição.");
+}
+
+function cancelarEdicaoOp() {
+  state.editOp = null;
+  state.carrinho = [];
+  limpaSplit("cx");
+  $("#cxPessoa").value = ""; $("#cxObs").value = "";
+  $("#cxData").value = toInputDT(new Date());
+  renderCarrinho();
+  atualizaModoEdicaoOp();
+  renderHistOp();
+  toast("Edição cancelada.");
+}
+
+function atualizaModoEdicaoOp() {
+  const ed = !!state.editOp;
+  $("#cxFinalizar").textContent = ed ? "Salvar alterações" : "Finalizar e lançar";
+  $("#cxLimpar").textContent = ed ? "Cancelar edição" : "Limpar carrinho";
+}
+
+async function excluirOperacao(op) {
+  if (!op || !guard()) return false;
+  if (!confirm(`Excluir esta ${op.tipo} com ${op.itens.length} item(ns) no valor de ${money(op.total)}?`)) return false;
+  try {
+    for (const id of op.lancs) await remove(ref(db, "lancamentos/" + id));
+    if (state.editOp === op.id) { state.editOp = null; state.carrinho = []; renderCarrinho(); atualizaModoEdicaoOp(); }
+    toast("Operação excluída.");
+    return true;
+  } catch (err) {
+    toast("Falha ao excluir: " + err.message, true);
+    return false;
+  }
+}
 
 /* -------------------- relatório de compras/vendas do dia ------------------ */
 if ($("#cxRelData")) $("#cxRelData").value = new Date().toISOString().slice(0, 10);
