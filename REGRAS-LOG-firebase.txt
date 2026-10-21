@@ -1,0 +1,20 @@
+Adicione/ajuste estes trechos dentro de "rules" no seu database.rules.json
+(Console Firebase > Realtime Database > Regras) para que o servidor também
+garanta que só admin@admin.com leia, apague ou configure o log:
+
+"logs": {
+  ".read": "auth != null && auth.token.email == 'admin@admin.com'",
+  ".write": "auth != null && auth.token.email == 'admin@admin.com'",
+  "$id": {
+    ".write": "auth != null && (auth.token.email == 'admin@admin.com' || (!data.exists() && newData.child('uid').val() == auth.uid))"
+  },
+  ".indexOn": ["ts"]
+},
+"config": {
+  "logConfig": {
+    ".read": "auth != null && auth.token.email == 'admin@admin.com'",
+    ".write": "auth != null && auth.token.email == 'admin@admin.com'"
+  }
+}
+
+Funcionários conseguem apenas CRIAR seus próprios registros (não leem, não editam, não apagam).
