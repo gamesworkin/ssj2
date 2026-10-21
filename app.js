@@ -40,7 +40,7 @@ const db = getDatabase(app);
 /* Toda gravação no banco passa por estes wrappers e gera um registro em "logs". */
 const MODULOS = {
   produtos: "Produtos", lancamentos: "Lançamentos", ajustes: "Estoque (ajustes)", contas: "Contas/caixas",
-  financeiro: "Financeiro", usuarios: "Funcionários", "config/ui": "Interface", "config/empresa": "Dados da empresa", config: "Configurações",
+  financeiro: "Financeiro", funcionarios: "Funcionários", usuarios: "Funcionários (legado)", "config/ui": "Interface", "config/empresa": "Dados da empresa", config: "Configurações",
 };
 function moduloDe(path) {
   if (path.startsWith("config/ui")) return MODULOS["config/ui"];
@@ -57,18 +57,36 @@ function resumoValor(v) {
   if (!partes.length) partes.push(Object.keys(v).length + " campo(s): " + Object.keys(v).slice(0, 6).join(", "));
   return partes.join(" | ");
 }
-function registrarLog(acao, path, detalhe) {
-  try {
-    const u = auth.currentUser;
-    if (!u || String(path || "").startsWith("logs")) return;
-    const p = (typeof state !== "undefined" && state.perfil) || {};
-    const nome = [p.nome, p.sobrenome].filter(Boolean).join(" ") || u.displayName || u.email;
-    _push(ref(db, "logs"), {
-      ts: Date.now(), uid: u.uid, email: u.email || "", nome,
-      acao, modulo: path ? moduloDe(path) : "Sessão", caminho: path || "", detalhe: String(detalhe || "").slice(0, 400),
-    }).catch((e) => console.warn("Falha ao gravar log:", e && e.code));
-  } catch (e) { console.warn("Log:", e); }
+/* monta o registro de log identificando o FUNCIONÁRIO que executou a operação */
+function montarLog(acao, path, detalhe, u) {
+  u = u || auth.currentUser;
+  const p = (typeof state !== "undefined" && state.perfil) || {};
+  const nome = [p.nome, p.sobrenome].filter(Boolean).join(" ") || u.displayName || u.email || "";
+  return {
+    ts: Date.now(),
+    uid: u.uid,                                  // exigido pelas regras do banco
+    funcionarioUid: u.uid,
+    funcionarioNome: nome,
+    funcionarioEmail: u.email || "",
+    funcionarioCargo: p.cargo || ((u.email || "").toLowerCase() === ADMIN_EMAIL ? "admin" : "funcionario"),
+    acao, modulo: path ? moduloDe(path) : "Sessão", caminho: path || "",
+    detalhe: String(detalhe || "").slice(0, 400),
+  };
 }
+function registrarLog(acao, path, detalhe, user) {
+  try {
+    const u = user || auth.currentUser;
+    if (!u || String(path || "").startsWith("logs")) return Promise.resolve();
+    return _push(ref(db, "logs"), montarLog(acao, path, detalhe, u)).catch((e) => console.warn("Falha ao gravar log:", e && e.code));
+  } catch (e) { console.warn("Log:", e); return Promise.resolve(); }
+}
+/* compatibilidade: registros antigos usavam uid/nome/email */
+const logFunc = (l) => ({
+  uid: l.funcionarioUid || l.uid || "",
+  nome: l.funcionarioNome || l.nome || "",
+  email: l.funcionarioEmail || l.email || "",
+  cargo: l.funcionarioCargo || "",
+});
 const pathDe = (r) => { try { return decodeURIComponent(new URL(r.toString()).pathname.replace(/^\//, "")); } catch (e) { return ""; } };
 function set(r, v) {
   const p = pathDe(r);
@@ -168,7 +186,7 @@ function acessosTotais() {
 }
 function guard() {
   if (typeof podeEscrever === "function" ? !podeEscrever() : !isAdmin()) {
-    toast("Seu usuário não tem permissão para gravar dados.", true); return false;
+    toast("Seu perfil de funcionário não tem permissão para gravar dados.", true); return false;
   }
   return true;
 }
@@ -321,7 +339,7 @@ $("#loginForm").addEventListener("submit", async (e) => {
   try {
     await setPersistence(auth, browserLocalPersistence);
     const cred = await signInWithEmailAndPassword(auth, $("#email").value.trim(), $("#password").value);
-    _push(ref(db, "logs"), { ts: Date.now(), uid: cred.user.uid, email: cred.user.email || "", nome: cred.user.displayName || cred.user.email, acao: "Login", modulo: "Sessão", caminho: "", detalhe: "Entrou no sistema" }).catch(() => {});
+    registrarLog("Login", "", "Entrou no sistema", cred.user);
   } catch (err) {
     loader(false);
     msg.className = "msg error";
@@ -357,7 +375,7 @@ function traduzErro(code) {
   return m[code] || "Erro: " + code;
 }
 $("#logoutBtn").onclick = async () => {
-  try { const u = auth.currentUser; if (u) await _push(ref(db, "logs"), { ts: Date.now(), uid: u.uid, email: u.email || "", nome: (state.perfil && state.perfil.nome) || u.email, acao: "Logout", modulo: "Sessão", caminho: "", detalhe: "Saiu do sistema" }); } catch (e) {}
+  try { const u = auth.currentUser; if (u) await registrarLog("Logout", "", "Saiu do sistema", u); } catch (e) {}
   signOut(auth);
 };
 
@@ -460,17 +478,24 @@ function startListeners() {
   watch("contas", (v) => { state.contas = v || {}; fillContaSelects(); renderAll(); });
   watch("financeiro", (v) => { state.financeiro = v || {}; renderAll(); });
 
-  watch("usuarios/" + state.user.uid, (v) => {
+  watch("funcionarios/" + state.user.uid, async (v) => {
+    /* migração: cadastros antigos ficavam em "usuarios"; copia para "funcionarios" */
+    if (!v) {
+      try {
+        const antigo = await get(ref(db, "usuarios/" + state.user.uid));
+        if (antigo.exists()) { await _set(ref(db, "funcionarios/" + state.user.uid), antigo.val()); return; }
+      } catch (e) { /* sem permissão no nó legado: segue normalmente */ }
+    }
     const ehAdminEmail = (state.user.email || "").toLowerCase() === ADMIN_EMAIL;
     /* garante que admin@admin.com seja sempre administrador com acesso total */
     if (ehAdminEmail) {
       if (!v) {
-        set(ref(db, "usuarios/" + state.user.uid), {
+        set(ref(db, "funcionarios/" + state.user.uid), {
           nome: "Administrador", sobrenome: "", whatsapp: "", email: state.user.email,
           cargo: "admin", ativo: true, foto: "", acessos: acessosTotais(), criadoEm: Date.now(),
         }).catch((e) => console.warn("Falha ao criar perfil do admin:", e));
       } else if (v.cargo !== "admin" || v.ativo === false) {
-        update(ref(db, "usuarios/" + state.user.uid), { cargo: "admin", ativo: true })
+        update(ref(db, "funcionarios/" + state.user.uid), { cargo: "admin", ativo: true })
           .catch((e) => console.warn("Falha ao corrigir perfil do admin:", e));
       }
     }
@@ -505,9 +530,24 @@ function startListeners() {
     }
     if (isAdmin() && !usuariosWatching) {
       usuariosWatching = true;
-      watch("usuarios", (all) => { state.usuarios = all || {}; renderUsuarios(); });
+      migrarFuncionariosLegados();
+      watch("funcionarios", (all) => { state.usuarios = all || {}; renderUsuarios(); });
     }
   });
+}
+
+/* admin: copia todos os cadastros do nó antigo "usuarios" para "funcionarios" (uma vez) */
+async function migrarFuncionariosLegados() {
+  try {
+    const [antigo, novo] = await Promise.all([get(ref(db, "usuarios")), get(ref(db, "funcionarios"))]);
+    if (!antigo.exists()) return;
+    const atuais = novo.val() || {}, pacote = {};
+    Object.entries(antigo.val()).forEach(([uid, d]) => { if (!atuais[uid]) pacote[uid] = d; });
+    if (Object.keys(pacote).length) {
+      await _update(ref(db, "funcionarios"), pacote);
+      registrarLog("Alteração", "funcionarios", Object.keys(pacote).length + " cadastro(s) migrados de 'usuarios' para 'funcionarios'");
+    }
+  } catch (e) { console.warn("Migração de funcionários:", e && e.code); }
 }
 
 function done() {
@@ -2538,7 +2578,7 @@ $("#perfilForm") && $("#perfilForm").addEventListener("submit", async (e) => {
   /* apenas o administrador pode alterar cargo/acessos */
   if (isAdmin()) dados.cargo = perfilAtual().cargo || "admin";
   try {
-    await update(ref(db, "usuarios/" + state.user.uid), dados);
+    await update(ref(db, "funcionarios/" + state.user.uid), dados);
     await updateProfile(state.user, {
       displayName: [dados.nome, dados.sobrenome].filter(Boolean).join(" ") || null,
     }).catch(() => {});
@@ -2620,14 +2660,14 @@ function renderUsuarios() {
     if (!isAdmin()) return toast("Somente o administrador.", true);
     const u = state.usuarios[b.dataset.tuser];
     if (ehUsuarioAdminMaster(u)) return toast("O administrador principal não pode ser desativado.", true);
-    await update(ref(db, "usuarios/" + b.dataset.tuser), { ativo: !(u.ativo !== false) });
+    await update(ref(db, "funcionarios/" + b.dataset.tuser), { ativo: !(u.ativo !== false) });
     toast("Situação atualizada.");
   }));
   $$("#tblUsuarios [data-duser]").forEach((b) => (b.onclick = async () => {
     if (!isAdmin()) return toast("Somente o administrador.", true);
     if (ehUsuarioAdminMaster(state.usuarios[b.dataset.duser])) return toast("O administrador principal não pode ser excluído.", true);
     if (!confirm("Remover o cadastro deste funcionário do sistema?\n(O login no Firebase Authentication deve ser removido pelo console.)")) return;
-    await remove(ref(db, "usuarios/" + b.dataset.duser));
+    await remove(ref(db, "funcionarios/" + b.dataset.duser));
     toast("Funcionário removido.");
   }));
 }
@@ -2699,7 +2739,7 @@ $("#usuarioForm") && $("#usuarioForm").addEventListener("submit", async (e) => {
         dados.cargo = "admin"; dados.ativo = true; dados.acessos = acessosTotais();
       }
       const { email, ...resto } = dados;
-      await update(ref(db, "usuarios/" + state.editUser), resto);
+      await update(ref(db, "funcionarios/" + state.editUser), resto);
       toast("Funcionário atualizado.");
     } else {
       const senha = $("#usrSenha").value;
@@ -2707,7 +2747,7 @@ $("#usuarioForm") && $("#usuarioForm").addEventListener("submit", async (e) => {
       loader(true, "Criando acesso do funcionário...");
       const a2 = getSecondaryAuth();
       const cred = await createUserWithEmailAndPassword(a2, dados.email, senha);
-      await set(ref(db, "usuarios/" + cred.user.uid), { ...dados, criadoEm: Date.now() });
+      await set(ref(db, "funcionarios/" + cred.user.uid), { ...dados, criadoEm: Date.now() });
       await signOut(a2);
       loader(false);
       toast("Funcionário cadastrado com sucesso.");
@@ -2754,18 +2794,18 @@ function logsArray() {
   return Object.entries(state.logs || {}).map(([id, l]) => ({ id, ...l })).sort((a, b) => (b.ts || 0) - (a.ts || 0));
 }
 function logsFiltrados() {
-  const u = $("#logUsuario").value, a = $("#logAcao").value, q = $("#logBusca").value.trim().toLowerCase();
+  const u = $("#logFuncionario").value, a = $("#logAcao").value, q = $("#logBusca").value.trim().toLowerCase();
   const de = $("#logDe").value ? new Date($("#logDe").value + "T00:00:00").getTime() : 0;
   const ate = $("#logAte").value ? new Date($("#logAte").value + "T23:59:59").getTime() : Infinity;
-  return logsArray().filter((l) => (!u || l.uid === u) && (!a || l.acao === a) && l.ts >= de && l.ts <= ate &&
-    (!q || [l.nome, l.email, l.modulo, l.detalhe, l.caminho].join(" ").toLowerCase().includes(q)));
+  return logsArray().filter((l) => (!u || logFunc(l).uid === u) && (!a || l.acao === a) && l.ts >= de && l.ts <= ate &&
+    (!q || [logFunc(l).nome, logFunc(l).email, logFunc(l).cargo, l.modulo, l.detalhe, l.caminho].join(" ").toLowerCase().includes(q)));
 }
 function renderLog() {
   const tb = $("#tblLog tbody");
   if (!tb) return;
-  const sel = $("#logUsuario"), atual = sel.value;
+  const sel = $("#logFuncionario"), atual = sel.value;
   const users = {};
-  logsArray().forEach((l) => { if (l.uid && !users[l.uid]) users[l.uid] = l.nome || l.email; });
+  logsArray().forEach((l) => { const f = logFunc(l); if (f.uid && !users[f.uid]) users[f.uid] = f.nome || f.email; });
   Object.entries(state.usuarios || {}).forEach(([uid, x]) => { users[uid] = [x.nome, x.sobrenome].filter(Boolean).join(" ") || x.email || users[uid]; });
   sel.innerHTML = `<option value="">Todos</option>` + Object.entries(users).sort((a, b) => String(a[1]).localeCompare(String(b[1])))
     .map(([id, n]) => `<option value="${id}">${escDoc(n)}</option>`).join("");
@@ -2776,19 +2816,19 @@ function renderLog() {
   const vis = typeof paginar === "function" ? paginar("log", rows) : rows.slice(0, 200);
   tb.innerHTML = vis.map((l) => `<tr>
     <td class="small">${escDoc(dtLocal(l.ts))}</td>
-    <td>${escDoc(l.nome || "-")}<br><span class="muted small">${escDoc(l.email || "")}</span></td>
+    <td>${escDoc(logFunc(l).nome || "-")}<br><span class="muted small">${escDoc(logFunc(l).email || "")}${logFunc(l).cargo ? " · " + escDoc(logFunc(l).cargo) : ""}</span></td>
     <td><span class="tag ${cls[l.acao] || ""}">${escDoc(l.acao)}</span></td>
     <td>${escDoc(l.modulo || "-")}</td>
     <td class="small">${escDoc(l.detalhe || "")}${l.caminho ? `<br><span class="muted">${escDoc(l.caminho)}</span>` : ""}</td>
   </tr>`).join("") || `<tr><td colspan="5" class="muted">Nenhum registro.</td></tr>`;
   if (typeof renderPager === "function") renderPager("tblLog", "log", rows.length, renderLog, "registros");
 }
-["#logUsuario", "#logAcao", "#logDe", "#logAte", "#logBusca"].forEach((s) => {
+["#logFuncionario", "#logAcao", "#logDe", "#logAte", "#logBusca"].forEach((s) => {
   const el = $(s); if (!el) return;
   el.addEventListener(s === "#logBusca" ? "input" : "change", () => { if (typeof resetPagina === "function") resetPagina("log"); renderLog(); });
 });
 if ($("#logCsv")) $("#logCsv").onclick = () => {
-  const rows = [["Data/hora", "Usuário", "E-mail", "Ação", "Módulo", "Detalhes", "Caminho"]]
-    .concat(logsFiltrados().map((l) => [dtLocal(l.ts), l.nome || "", l.email || "", l.acao || "", l.modulo || "", l.detalhe || "", l.caminho || ""]));
+  const rows = [["Data/hora", "Funcionário", "E-mail", "Cargo", "Ação", "Módulo", "Detalhes", "Caminho"]]
+    .concat(logsFiltrados().map((l) => [dtLocal(l.ts), logFunc(l).nome, logFunc(l).email, logFunc(l).cargo, l.acao || "", l.modulo || "", l.detalhe || "", l.caminho || ""]));
   baixar(csv(rows), "log-operacoes.csv", "text/csv;charset=utf-8");
 };

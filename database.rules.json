@@ -1,0 +1,37 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "config":      { ".read": "auth != null", ".write": "auth != null && (auth.token.email === 'admin@admin.com' || root.child('funcionarios/' + auth.uid + '/cargo').val() === 'admin')" },
+    "produtos":    { ".read": "auth != null", ".write": "auth != null && root.child('funcionarios/' + auth.uid + '/ativo').val() !== false" },
+    "lancamentos": { ".read": "auth != null", ".write": "auth != null && root.child('funcionarios/' + auth.uid + '/ativo').val() !== false" },
+    "ajustes":     { ".read": "auth != null", ".write": "auth != null && root.child('funcionarios/' + auth.uid + '/ativo').val() !== false" },
+    "contas":      { ".read": "auth != null", ".write": "auth != null && root.child('funcionarios/' + auth.uid + '/ativo').val() !== false" },
+    "financeiro":  { ".read": "auth != null", ".write": "auth != null && root.child('funcionarios/' + auth.uid + '/ativo').val() !== false" },
+
+    "funcionarios": {
+      ".read":  "auth != null && (auth.token.email === 'admin@admin.com' || root.child('funcionarios/' + auth.uid + '/cargo').val() === 'admin')",
+      ".write": "auth != null && (auth.token.email === 'admin@admin.com' || root.child('funcionarios/' + auth.uid + '/cargo').val() === 'admin')",
+      "$uid": {
+        ".read":  "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && newData.exists() && (newData.child('cargo').val() === data.child('cargo').val() || (!data.exists() && newData.child('cargo').val() !== 'admin'))"
+      }
+    },
+
+    "usuarios": {
+      ".read":  "auth != null && (auth.token.email === 'admin@admin.com' || root.child('funcionarios/' + auth.uid + '/cargo').val() === 'admin')",
+      ".write": false,
+      "$uid": { ".read": "auth != null && auth.uid === $uid" }
+    },
+
+    "logs": {
+      ".read": "auth != null && (auth.token.email === 'admin@admin.com' || root.child('funcionarios/' + auth.uid + '/cargo').val() === 'admin')",
+      ".indexOn": ["ts", "funcionarioUid", "acao"],
+      "$logId": {
+        ".write": "auth != null && !data.exists() && newData.exists()",
+        ".validate": "newData.hasChildren(['ts', 'uid', 'funcionarioUid', 'acao']) && newData.child('uid').val() === auth.uid && newData.child('funcionarioUid').val() === auth.uid && newData.child('ts').isNumber() && newData.child('ts').val() <= now + 60000"
+      }
+    }
+  }
+}
