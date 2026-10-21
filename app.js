@@ -18,6 +18,8 @@ const firebaseConfig = {
 };
 
 const ADMIN_EMAIL = "admin@admin.com"; // único usuário com permissão de escrita
+/* somente quem está logado com admin@admin.com acessa/gerencia o Log */
+const ehAdminLog = () => !!(auth.currentUser && (auth.currentUser.email || "").toLowerCase() === ADMIN_EMAIL);
 
 /* ------------------------------ imports ---------------------------------- */
 import { prepararImpressao } from "./print-doc.js";
@@ -57,7 +59,7 @@ function resumoValor(v) {
   if (!partes.length) partes.push(Object.keys(v).length + " campo(s): " + Object.keys(v).slice(0, 6).join(", "));
   return partes.join(" | ");
 }
-function registrarLog(acao, path, detalhe) {
+function registrarLog(acao, path, detalhe, moduloForcado) {
   try {
     const u = auth.currentUser;
     if (!u || String(path || "").startsWith("logs")) return;
@@ -65,7 +67,7 @@ function registrarLog(acao, path, detalhe) {
     const nome = [p.nome, p.sobrenome].filter(Boolean).join(" ") || u.displayName || u.email;
     _push(ref(db, "logs"), {
       ts: Date.now(), uid: u.uid, email: u.email || "", nome,
-      acao, modulo: path ? moduloDe(path) : "Sessão", caminho: path || "", detalhe: String(detalhe || "").slice(0, 400),
+      acao, modulo: moduloForcado || (path ? moduloDe(path) : "Sessão"), caminho: path || "", detalhe: String(detalhe || "").slice(0, 400),
     }).catch((e) => console.warn("Falha ao gravar log:", e && e.code));
   } catch (e) { console.warn("Log:", e); }
 }
@@ -392,6 +394,8 @@ $$(".nav-item").forEach((btn) => {
   btn.onclick = () => {
     const alvo = $("#view-" + btn.dataset.view);
     if (!alvo) { console.warn("View inexistente:", btn.dataset.view); return; }
+    if (btn.dataset.view === "log" && !ehAdminLog()) { toast("Acesso ao Log restrito ao administrador.", true); return; }
+    if (!btn.classList.contains("active")) registrarLog("Acesso", "", "Abriu o menu " + (btn.textContent || btn.dataset.view).trim(), "Navegação");
     $$(".nav-item").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     $$(".view").forEach((v) => v.classList.add("hidden"));
@@ -499,9 +503,10 @@ function startListeners() {
     preencherPerfil();
     aplicarAcessos();
     /* a lista completa de funcionários é visível apenas ao administrador */
-    if (isAdmin() && !logsWatching) {
+    if (ehAdminLog() && !logsWatching) {
       logsWatching = true;
       watch("logs", (v) => { state.logs = v || {}; renderLog(); });
+      watch("config/logConfig", (v) => { state.logConfig = v || {}; preencheLogConfig(); limpezaAutomaticaLog(); });
     }
     if (isAdmin() && !usuariosWatching) {
       usuariosWatching = true;
@@ -2567,7 +2572,8 @@ function aplicarAcessos() {
   $$(".nav-item").forEach((b) => {
     const v = b.dataset.view;
     if (v === "perfil") { b.classList.remove("hidden"); return; }
-    if (["usuarios", "empresa", "log"].includes(v)) { b.classList.toggle("hidden", !isAdmin()); return; }
+    if (v === "log") { b.classList.toggle("hidden", !ehAdminLog()); return; }
+    if (["usuarios", "empresa"].includes(v)) { b.classList.toggle("hidden", !isAdmin()); return; }
     b.classList.toggle("hidden", !podeVer(v));
   });
   const ativo = $$(".nav-item").find((b) => b.classList.contains("active"));
@@ -2760,9 +2766,12 @@ function logsFiltrados() {
   return logsArray().filter((l) => (!u || l.uid === u) && (!a || l.acao === a) && l.ts >= de && l.ts <= ate &&
     (!q || [l.nome, l.email, l.modulo, l.detalhe, l.caminho].join(" ").toLowerCase().includes(q)));
 }
+state.logSel = new Set();
+state.logConfig = {};
 function renderLog() {
   const tb = $("#tblLog tbody");
   if (!tb) return;
+  if (!ehAdminLog()) { tb.innerHTML = `<tr><td colspan="6" class="muted">Acesso restrito ao administrador.</td></tr>`; return; }
   const sel = $("#logUsuario"), atual = sel.value;
   const users = {};
   logsArray().forEach((l) => { if (l.uid && !users[l.uid]) users[l.uid] = l.nome || l.email; });
@@ -2771,24 +2780,146 @@ function renderLog() {
     .map(([id, n]) => `<option value="${id}">${escDoc(n)}</option>`).join("");
   sel.value = atual;
   const rows = logsFiltrados();
-  $("#logTotal").textContent = rows.length + " registro(s)";
-  const cls = { "Criação": "entrada", "Alteração": "pendente", "Exclusão": "saida", "Login": "pago", "Logout": "" };
+  const ids = new Set(Object.keys(state.logs || {}));
+  state.logSel.forEach((id) => { if (!ids.has(id)) state.logSel.delete(id); });
+  $("#logTotal").textContent = rows.length + " registro(s) filtrado(s) · " + ids.size + " no total" + (state.logSel.size ? " · " + state.logSel.size + " selecionado(s)" : "");
+  const cls = { "Criação": "entrada", "Alteração": "pendente", "Exclusão": "saida", "Login": "pago", "Logout": "", "Acesso": "manual", "Exportação": "operacional", "Limpeza do log": "saida" };
   const vis = typeof paginar === "function" ? paginar("log", rows) : rows.slice(0, 200);
   tb.innerHTML = vis.map((l) => `<tr>
+    <td><input type="checkbox" class="log-chk" data-id="${escDoc(l.id)}" ${state.logSel.has(l.id) ? "checked" : ""} /></td>
     <td class="small">${escDoc(dtLocal(l.ts))}</td>
     <td>${escDoc(l.nome || "-")}<br><span class="muted small">${escDoc(l.email || "")}</span></td>
     <td><span class="tag ${cls[l.acao] || ""}">${escDoc(l.acao)}</span></td>
     <td>${escDoc(l.modulo || "-")}</td>
     <td class="small">${escDoc(l.detalhe || "")}${l.caminho ? `<br><span class="muted">${escDoc(l.caminho)}</span>` : ""}</td>
-  </tr>`).join("") || `<tr><td colspan="5" class="muted">Nenhum registro.</td></tr>`;
+    <td><button class="btn danger sm log-del" type="button" data-id="${escDoc(l.id)}" title="Apagar registro">✕</button></td>
+  </tr>`).join("") || `<tr><td colspan="7" class="muted">Nenhum registro.</td></tr>`;
+  const all = $("#logChkAll"); if (all) all.checked = vis.length > 0 && vis.every((l) => state.logSel.has(l.id));
   if (typeof renderPager === "function") renderPager("tblLog", "log", rows.length, renderLog, "registros");
 }
 ["#logUsuario", "#logAcao", "#logDe", "#logAte", "#logBusca"].forEach((s) => {
   const el = $(s); if (!el) return;
   el.addEventListener(s === "#logBusca" ? "input" : "change", () => { if (typeof resetPagina === "function") resetPagina("log"); renderLog(); });
 });
-if ($("#logCsv")) $("#logCsv").onclick = () => {
-  const rows = [["Data/hora", "Usuário", "E-mail", "Ação", "Módulo", "Detalhes", "Caminho"]]
-    .concat(logsFiltrados().map((l) => [dtLocal(l.ts), l.nome || "", l.email || "", l.acao || "", l.modulo || "", l.detalhe || "", l.caminho || ""]));
-  baixar(csv(rows), "log-operacoes.csv", "text/csv;charset=utf-8");
-};
+
+/* ---------- gerenciamento (somente admin@admin.com) ---------- */
+function exigeAdminLog() {
+  if (ehAdminLog()) return true;
+  toast("Somente o administrador (" + ADMIN_EMAIL + ") pode gerenciar o log.", true);
+  return false;
+}
+/* apaga em lotes para não estourar o limite de uma única gravação */
+async function apagarLogs(ids, motivo) {
+  if (!ids.length) { toast("Nenhum registro para apagar.", true); return 0; }
+  loader(true, "Apagando registros do log...");
+  try {
+    for (let i = 0; i < ids.length; i += 500) {
+      const lote = {};
+      ids.slice(i, i + 500).forEach((id) => { lote[id] = null; });
+      await _update(ref(db, "logs"), lote);
+    }
+    ids.forEach((id) => state.logSel.delete(id));
+    const u = auth.currentUser;
+    await _push(ref(db, "logs"), { ts: Date.now(), uid: u.uid, email: u.email || "", nome: (state.perfil && state.perfil.nome) || u.email,
+      acao: "Limpeza do log", modulo: "Log", caminho: "logs", detalhe: ids.length + " registro(s) apagado(s) — " + motivo });
+    toast(ids.length + " registro(s) apagado(s).");
+    return ids.length;
+  } catch (e) {
+    console.error(e); toast("Falha ao apagar: " + ((e && e.code) || e), true); return 0;
+  } finally { loader(false); }
+}
+function linhasExport(lista) {
+  return [["Data/hora", "Usuário", "E-mail", "Ação", "Módulo", "Detalhes", "Caminho", "ID"]]
+    .concat(lista.map((l) => [dtLocal(l.ts), l.nome || "", l.email || "", l.acao || "", l.modulo || "", l.detalhe || "", l.caminho || "", l.id]));
+}
+function exportarLog(formato, escopo) {
+  if (!exigeAdminLog()) return;
+  let lista = escopo === "sel" ? logsArray().filter((l) => state.logSel.has(l.id)) : escopo === "tudo" ? logsArray() : logsFiltrados();
+  if (!lista.length) { toast("Nada para exportar.", true); return; }
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (formato === "json") baixar(JSON.stringify(lista, null, 2), `log-operacoes-${stamp}.json`, "application/json");
+  else baixar(csv(linhasExport(lista)), `log-operacoes-${stamp}.csv`, "text/csv;charset=utf-8");
+  registrarLog("Exportação", "", lista.length + " registro(s) do log exportados em " + formato.toUpperCase(), "Log");
+}
+const onClick = (s, fn) => { const el = $(s); if (el) el.onclick = fn; };
+onClick("#logCsv", () => exportarLog("csv", $("#logEscopo") ? $("#logEscopo").value : "filtro"));
+onClick("#logJson", () => exportarLog("json", $("#logEscopo") ? $("#logEscopo").value : "filtro"));
+onClick("#logDelSel", async () => {
+  if (!exigeAdminLog()) return;
+  const ids = [...state.logSel];
+  if (!ids.length) return toast("Selecione registros na tabela.", true);
+  if (confirm(`Apagar ${ids.length} registro(s) selecionado(s)?`)) await apagarLogs(ids, "seleção manual");
+});
+onClick("#logDelFiltro", async () => {
+  if (!exigeAdminLog()) return;
+  const ids = logsFiltrados().map((l) => l.id);
+  if (!ids.length) return toast("Nenhum registro no filtro atual.", true);
+  if (confirm(`Apagar os ${ids.length} registro(s) do filtro atual?`)) await apagarLogs(ids, "registros filtrados");
+});
+onClick("#logDelTudo", async () => {
+  if (!exigeAdminLog()) return;
+  const ids = Object.keys(state.logs || {});
+  if (!ids.length) return toast("O log já está vazio.", true);
+  if (!confirm(`Apagar TODOS os ${ids.length} registros do log?`)) return;
+  if (prompt('Digite LIMPAR para confirmar:') !== "LIMPAR") return toast("Operação cancelada.");
+  if ($("#logBackupAntes") && $("#logBackupAntes").checked) exportarLog("csv", "tudo");
+  await apagarLogs(ids, "limpeza total");
+});
+onClick("#logDelAntigos", async () => {
+  if (!exigeAdminLog()) return;
+  const dias = num($("#logDias").value);
+  if (dias < 1) return toast("Informe a quantidade de dias.", true);
+  const corte = Date.now() - dias * 86400000;
+  const ids = logsArray().filter((l) => (l.ts || 0) < corte).map((l) => l.id);
+  if (!ids.length) return toast(`Nenhum registro com mais de ${dias} dia(s).`);
+  if (confirm(`Apagar ${ids.length} registro(s) com mais de ${dias} dia(s)?`)) await apagarLogs(ids, `mais antigos que ${dias} dia(s)`);
+});
+const tblLogEl = $("#tblLog");
+if (tblLogEl) tblLogEl.addEventListener("click", async (e) => {
+  const chk = e.target.closest(".log-chk");
+  if (chk) { chk.checked ? state.logSel.add(chk.dataset.id) : state.logSel.delete(chk.dataset.id); renderLog(); return; }
+  if (e.target.id === "logChkAll") {
+    const vis = typeof paginar === "function" ? paginar("log", logsFiltrados()) : logsFiltrados();
+    vis.forEach((l) => (e.target.checked ? state.logSel.add(l.id) : state.logSel.delete(l.id)));
+    renderLog(); return;
+  }
+  const del = e.target.closest(".log-del");
+  if (del && exigeAdminLog() && confirm("Apagar este registro do log?")) await apagarLogs([del.dataset.id], "registro individual");
+});
+
+/* ---------- limpeza periódica automática ---------- */
+function preencheLogConfig() {
+  const c = state.logConfig || {};
+  if ($("#logAutoAtivo")) $("#logAutoAtivo").checked = !!c.autoAtivo;
+  if ($("#logAutoDias")) $("#logAutoDias").value = c.autoDias || 90;
+  if ($("#logAutoBackup")) $("#logAutoBackup").checked = !!c.autoBackup;
+  if ($("#logAutoInfo")) $("#logAutoInfo").textContent = c.ultimaLimpeza
+    ? "Última limpeza automática: " + dtLocal(c.ultimaLimpeza) + (c.ultimaQtd != null ? ` (${c.ultimaQtd} registro(s))` : "")
+    : "Nenhuma limpeza automática executada ainda.";
+}
+onClick("#logAutoSalvar", async () => {
+  if (!exigeAdminLog()) return;
+  const dias = Math.max(1, Math.round(num($("#logAutoDias").value) || 90));
+  const cfg = { ...(state.logConfig || {}), autoAtivo: $("#logAutoAtivo").checked, autoDias: dias, autoBackup: $("#logAutoBackup").checked };
+  try { await _set(ref(db, "config/logConfig"), cfg); registrarLog("Alteração", "", `Limpeza automática ${cfg.autoAtivo ? "ativada" : "desativada"} (${dias} dias)`, "Log"); toast("Configuração do log salva."); }
+  catch (e) { toast("Falha ao salvar: " + ((e && e.code) || e), true); }
+});
+let limpezaRodando = false;
+/* executada quando o admin entra: no máximo 1x a cada 24h */
+async function limpezaAutomaticaLog() {
+  const c = state.logConfig || {};
+  if (!ehAdminLog() || !c.autoAtivo || limpezaRodando) return;
+  if (c.ultimaLimpeza && Date.now() - c.ultimaLimpeza < 86400000) return;
+  if (!state.logs || !Object.keys(state.logs).length) return;
+  limpezaRodando = true;
+  try {
+    const dias = c.autoDias || 90, corte = Date.now() - dias * 86400000;
+    const antigos = logsArray().filter((l) => (l.ts || 0) < corte);
+    if (antigos.length && c.autoBackup) {
+      baixar(csv(linhasExport(antigos)), `log-backup-auto-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8");
+    }
+    const qtd = antigos.length ? await apagarLogs(antigos.map((l) => l.id), `limpeza automática (> ${dias} dias)`) : 0;
+    await _set(ref(db, "config/logConfig"), { ...c, ultimaLimpeza: Date.now(), ultimaQtd: qtd });
+  } catch (e) { console.warn("Limpeza automática do log:", e); }
+  finally { limpezaRodando = false; }
+}

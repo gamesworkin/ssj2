@@ -279,3 +279,9 @@ tr.vencido td{background:color-mix(in srgb,var(--danger) 8%,transparent)}
   .pag-row{grid-template-columns:1fr 1fr;grid-auto-flow:row}
   .pag-row button{grid-column:1 / -1}
 }
+
+/* ---- Log de operações ---- */
+.log-actions{flex-wrap:wrap;align-items:center}
+.log-num{width:90px}
+.btn.sm{padding:4px 8px;font-size:.8rem}
+#tblLog td:first-child,#tblLog th:first-child{width:32px;text-align:center}

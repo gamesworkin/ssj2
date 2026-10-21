@@ -640,16 +640,43 @@
       <!-- LOG DE OPERAÇÕES -->
       <section class="view hidden" id="view-log">
         <h2 class="view-title">Log de operações</h2>
+        <p class="muted small">Registra criações, alterações, exclusões, acessos aos menus, exportações, logins e logouts de todos os funcionários. Acesso exclusivo do administrador (admin@admin.com).</p>
         <div class="panel grid-form">
           <div><label>Usuário</label><select id="logUsuario"><option value="">Todos</option></select></div>
-          <div><label>Ação</label><select id="logAcao"><option value="">Todas</option><option>Criação</option><option>Alteração</option><option>Exclusão</option><option>Login</option><option>Logout</option></select></div>
+          <div><label>Ação</label><select id="logAcao"><option value="">Todas</option><option>Criação</option><option>Alteração</option><option>Exclusão</option><option>Acesso</option><option>Exportação</option><option>Login</option><option>Logout</option><option>Limpeza do log</option></select></div>
           <div><label>De</label><input type="date" id="logDe" /></div>
           <div><label>Até</label><input type="date" id="logAte" /></div>
           <div class="full"><label>Buscar</label><input type="text" id="logBusca" placeholder="Módulo, detalhe, e-mail..." /></div>
-          <div class="full row gap"><button class="btn ghost" type="button" id="logCsv">Exportar CSV</button><span class="muted small" id="logTotal"></span></div>
+          <div><label>Exportar</label><select id="logEscopo"><option value="filtro">Registros filtrados</option><option value="sel">Somente selecionados</option><option value="tudo">Log completo</option></select></div>
+          <div class="row gap log-actions"><button class="btn ghost" type="button" id="logCsv">Exportar CSV</button><button class="btn ghost" type="button" id="logJson">Exportar JSON</button></div>
+          <div class="full row gap log-actions">
+            <button class="btn danger" type="button" id="logDelSel">Apagar selecionados</button>
+            <button class="btn danger" type="button" id="logDelFiltro">Apagar filtrados</button>
+            <button class="btn danger" type="button" id="logDelTudo">Limpar todo o log</button>
+            <label class="row gap small"><input type="checkbox" id="logBackupAntes" checked /> Baixar backup antes de limpar tudo</label>
+          </div>
+          <div class="full row gap log-actions">
+            <label class="small">Apagar registros com mais de</label>
+            <input type="number" id="logDias" min="1" value="30" class="log-num" />
+            <span class="small">dias</span>
+            <button class="btn danger" type="button" id="logDelAntigos">Apagar antigos</button>
+          </div>
+          <div class="full"><span class="muted small" id="logTotal"></span></div>
+        </div>
+        <div class="panel grid-form">
+          <div class="full"><strong>Limpeza periódica automática</strong><p class="muted small">Executada no máximo uma vez por dia, quando o administrador entra no sistema.</p></div>
+          <div class="full row gap log-actions">
+            <label class="row gap small"><input type="checkbox" id="logAutoAtivo" /> Ativar</label>
+            <label class="small">Manter últimos</label>
+            <input type="number" id="logAutoDias" min="1" value="90" class="log-num" />
+            <span class="small">dias</span>
+            <label class="row gap small"><input type="checkbox" id="logAutoBackup" /> Baixar CSV do que for apagado</label>
+            <button class="btn primary" type="button" id="logAutoSalvar">Salvar</button>
+          </div>
+          <div class="full"><span class="muted small" id="logAutoInfo"></span></div>
         </div>
         <div class="table-wrap">
-          <table id="tblLog"><thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Módulo</th><th>Detalhes</th></tr></thead><tbody></tbody></table>
+          <table id="tblLog"><thead><tr><th><input type="checkbox" id="logChkAll" title="Selecionar página" /></th><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Módulo</th><th>Detalhes</th><th></th></tr></thead><tbody></tbody></table>
         </div>
       </section>
 
