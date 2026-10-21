@@ -1945,41 +1945,73 @@ function cabecalhoEmpresaHTML() {
 
 /* ------------------------------ recibo ----------------------------------- */
 function reciboHTML(op) {
-  const titulo = op.tipo === "venda" ? "Recibo de venda" : "Recibo de compra";
+  const venda = op.tipo === "venda";
+  const titulo = venda ? "Recibo de venda" : "Recibo de compra";
   const totalGeral = op.itens.reduce((s, i) => s + num(i.total), 0);
   const pags = (Array.isArray(op.pagamentos) && op.pagamentos.length)
     ? op.pagamentos.map((p) => ({ contaId: p.contaId, valor: cent(p.valor) })).filter((p) => p.valor > 0)
     : [{ contaId: op.contaId, valor: cent(totalGeral) }];
   const tKg = op.itens.filter((i) => (i.unidade || "kg") !== "un").reduce((s, i) => s + num(i.peso), 0);
   const tUn = op.itens.filter((i) => (i.unidade || "kg") === "un").reduce((s, i) => s + num(i.peso), 0);
-  const linhas = op.itens.map((i) => `<tr>
-    <td>${escDoc(i.produtoNome || prodNome(i.produtoId))}</td>
+  const numero = String(op.id || "").slice(-8).toUpperCase() || "—";
+  const linhas = op.itens.map((i, n) => `<tr>
+    <td class="c">${n + 1}</td>
+    <td><strong>${escDoc(i.produtoNome || prodNome(i.produtoId))}</strong>${i.obs ? `<div class="rc-obs">${escDoc(i.obs)}</div>` : ""}</td>
     <td class="r">${qtd(i.peso, i.unidade || "kg")}</td>
     <td class="r">${money(i.preco)}</td>
-    <td class="r">${money(i.total)}</td>
-    <td>${escDoc(i.obs || "-")}</td></tr>`).join("");
-  return `${cabecalhoEmpresaHTML()}
-<h1>${titulo}</h1>
-<h2>${escDoc(dtLocal(op.data))}</h2>
-<div class="kpis">
-  <div class="kpi"><span>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</span><strong>${escDoc(op.pessoa || "Não informado")}</strong></div>
-  <div class="kpi"><span>Conta / caixa</span><strong>${escDoc(pags.map((p) => contaNome(p.contaId)).join(" \u00b7 "))}</strong></div>
-  <div class="kpi"><span>Itens</span><strong>${op.itens.length}</strong></div>
-  <div class="kpi"><span>Quantidade</span><strong>${dual(tKg, tUn)}</strong></div>
-  <div class="kpi"><span>Valor total</span><strong>${money(totalGeral)}</strong></div>
+    <td class="r"><strong>${money(i.total)}</strong></td></tr>`).join("");
+  const css = `<style>
+  .rc { --ac:#1f3a5f; --ac2:#e8eef6; font-family:"Segoe UI",Arial,Helvetica,sans-serif; color:#1b1f24; }
+  .rc .doc-head { border-bottom:3px solid var(--ac); }
+  .rc-band { display:flex; justify-content:space-between; align-items:stretch; background:var(--ac); color:#fff; border-radius:8px; padding:12px 16px; margin:4px 0 14px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rc-band h1 { font-size:20px; letter-spacing:.5px; text-transform:uppercase; margin:0; color:#fff; }
+  .rc-band small { opacity:.85; font-size:11px; }
+  .rc-band .rc-n { text-align:right; }
+  .rc-band .rc-n b { display:block; font-size:16px; font-family:Consolas,monospace; }
+  .rc-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+  .rc-box { border:1px solid #d6dde6; border-radius:8px; padding:9px 12px; }
+  .rc-box span { display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.6px; color:#6b7684; margin-bottom:2px; }
+  .rc-box strong { font-size:13px; }
+  .rc table { border:1px solid #d6dde6; border-radius:8px; border-collapse:separate; border-spacing:0; overflow:hidden; }
+  .rc th { background:var(--ac2); color:var(--ac); text-transform:uppercase; font-size:10px; letter-spacing:.5px; padding:7px 8px; border-bottom:1px solid #d6dde6; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rc td { padding:7px 8px; border-bottom:1px solid #eef1f5; }
+  .rc tbody tr:nth-child(even) td { background:#fafbfd; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rc td.c, .rc th.c { text-align:center; width:28px; color:#6b7684; }
+  .rc-obs { color:#6b7684; font-size:10.5px; margin-top:2px; }
+  .rc h3 { color:var(--ac); border-bottom:1px solid #d6dde6; text-transform:uppercase; font-size:11px; letter-spacing:.6px; }
+  .rc-sum { display:flex; justify-content:flex-end; margin:4px 0 12px; }
+  .rc-sum table { width:300px; }
+  .rc-sum td { border:none; padding:5px 10px; }
+  .rc-sum tr.tot td { background:var(--ac) !important; color:#fff; font-size:15px; font-weight:bold; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rc-note { background:#f6f8fb; border-left:4px solid var(--ac); padding:8px 12px; border-radius:4px; margin:10px 0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rc .assinatura { margin-top:48px; gap:40px; }
+  .rc .assinatura div { border-top:1px solid #1b1f24; color:#1b1f24; font-size:11px; }
+  .rc .assinatura small { display:block; color:#6b7684; font-size:9.5px; }
+  .rc-foot { margin-top:18px; padding-top:8px; border-top:1px solid #d6dde6; display:flex; justify-content:space-between; color:#8a94a2; font-size:9.5px; }
+  </style>`;
+  return `${css}<div class="rc">${cabecalhoEmpresaHTML()}
+<div class="rc-band"><div><h1>${titulo}</h1><small>${escDoc(dtLocal(op.data))}</small></div>
+<div class="rc-n"><small>Nº do documento</small><b>#${escDoc(numero)}</b></div></div>
+<div class="rc-grid">
+  <div class="rc-box"><span>${venda ? "Cliente" : "Fornecedor"}</span><strong>${escDoc(op.pessoa || "Não informado")}</strong></div>
+  <div class="rc-box"><span>Conta / caixa</span><strong>${escDoc(pags.map((p) => contaNome(p.contaId)).join(" \u00b7 "))}</strong></div>
+  <div class="rc-box"><span>Itens</span><strong>${op.itens.length}</strong></div>
+  <div class="rc-box"><span>Quantidade total</span><strong>${dual(tKg, tUn)}</strong></div>
 </div>
 <h3>Itens</h3>
-<table><thead><tr><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Subtotal</th><th>Obs</th></tr></thead>
-<tbody>${linhas}</tbody>
-<tfoot><tr><td colspan="3">Total</td><td class="r">${money(totalGeral)}</td><td></td></tr></tfoot></table>
+<table><thead><tr><th class="c">#</th><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Subtotal</th></tr></thead>
+<tbody>${linhas}</tbody></table>
+<div class="rc-sum"><table>
+<tr><td>Subtotal</td><td class="r">${money(totalGeral)}</td></tr>
+<tr class="tot"><td>TOTAL</td><td class="r">${money(totalGeral)}</td></tr></table></div>
 ${pags.length > 1 ? `<h3>Formas de pagamento</h3>
 <table><thead><tr><th>Conta / caixa</th><th class="r">Valor</th></tr></thead>
-<tbody>${pags.map((p) => `<tr><td>${escDoc(contaNome(p.contaId))}</td><td class="r">${money(p.valor)}</td></tr>`).join("")}</tbody>
-<tfoot><tr><td>Total</td><td class="r">${money(pags.reduce((s, p) => s + num(p.valor), 0))}</td></tr></tfoot></table>` : ""}
-${op.obs ? `<p><strong>Observação:</strong> ${escDoc(op.obs)}</p>` : ""}
-<div class="assinatura"><div>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</div><div>${escDoc(empresaNome())}</div></div>
-${state.empresa && state.empresa.obsRecibo ? `<p class="aviso">${escDoc(state.empresa.obsRecibo)}</p>` : ""}
-<p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`;
+<tbody>${pags.map((p) => `<tr><td>${escDoc(contaNome(p.contaId))}</td><td class="r">${money(p.valor)}</td></tr>`).join("")}</tbody></table>` : ""}
+${op.obs ? `<div class="rc-note"><strong>Observação:</strong> ${escDoc(op.obs)}</div>` : ""}
+${state.empresa && state.empresa.obsRecibo ? `<div class="rc-note">${escDoc(state.empresa.obsRecibo)}</div>` : ""}
+<div class="assinatura"><div>${venda ? "Cliente" : "Fornecedor"}<small>${escDoc(op.pessoa || "")}</small></div><div>${escDoc(empresaNome())}<small>Responsável</small></div></div>
+<div class="rc-foot"><span>Documento sem valor fiscal</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
+</div>`;
 }
 if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
   let op;
