@@ -20,6 +20,7 @@ const firebaseConfig = {
 const ADMIN_EMAIL = "admin@admin.com"; // único usuário com permissão de escrita
 
 /* ------------------------------ imports ---------------------------------- */
+import { prepararImpressao } from "./print-doc.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, signInWithEmailAndPassword, signOut,
@@ -1880,7 +1881,7 @@ ${tabela(porCat, "Resumo por categoria")}
 /* ========================================================================== */
 
 function escDoc(v) {
-  return String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 const DOC_CSS = `
   @page { size: A4; margin: 12mm; }
@@ -1903,7 +1904,7 @@ const DOC_CSS = `
   .rodape { margin-top:14px; color:#777; font-size:10px; }
   .aviso { margin:8px 0; padding:6px 8px; border:1px dashed #999; color:#444; font-size:11px; }
   thead { display:table-header-group; }
-  .doc-head { display:flex; align-items:center; gap:14px; border-bottom:2px solid #222; padding-bottom:10px; margin-bottom:12px; }
+  .doc-head { display:flex; align-items:center; gap:14px; border-bottom:2px solid #222; padding-bottom:10px; margin-bottom:12px; break-inside:avoid; page-break-inside:avoid; }
   .doc-logo { width:72px; height:72px; object-fit:contain; flex:none; }
   .doc-emp { flex:1; min-width:0; }
   .doc-wordmark { max-height:46px; max-width:320px; object-fit:contain; display:block; margin-bottom:3px; }
@@ -1911,16 +1912,25 @@ const DOC_CSS = `
   .doc-nome.sm { font-size:12px; }
   .doc-info { color:#444; font-size:10.5px; line-height:1.45; }
   tr { page-break-inside:avoid; }
+  .doc-print-controls { display:flex; align-items:center; gap:16px; margin:0 0 18px; padding:12px; background:#f2f2f2; border:1px solid #ccc; }
+  .doc-print-controls span { flex:1; }
+  .doc-print-controls button { padding:8px 12px; cursor:pointer; flex:none; }
+  .doc-print-warning { display:none; }
+  @media print {
+    .doc-print-controls { display:none !important; }
+    .doc-head img { display:block !important; visibility:visible !important; opacity:1 !important; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+    .doc-print-blocked > :not(.doc-print-warning) { display:none !important; }
+    .doc-print-blocked > .doc-print-warning { display:block !important; }
+  }
 `;
 function abrirDoc(titulo, corpo) {
   const w = window.open("", "_blank");
   if (!w) return toast("Permita pop-ups para gerar o documento.", true);
   w.document.open();
   w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
-<title>${escDoc(titulo)}</title><style>${DOC_CSS}</style></head><body>${corpo}</body></html>`);
+<title>${escDoc(titulo)}</title><base href="${escDoc(document.baseURI)}"><style>${DOC_CSS}</style></head><body>${corpo}</body></html>`);
   w.document.close();
-  w.focus();
-  setTimeout(() => w.print(), 400);
+  prepararImpressao(w);
 }
 const empresaNome = () => (state.empresa && (state.empresa.fantasia || state.empresa.razao)) || (state.ui && state.ui.brand) || "Sistema Gerencial";
 function cabecalhoEmpresaHTML() {
@@ -1934,9 +1944,9 @@ function cabecalhoEmpresaHTML() {
     e.razao && e.fantasia && e.razao !== e.fantasia ? e.razao : "", docs, end1, end2, cont,
   ].filter(Boolean).map((l) => `<div>${escDoc(l)}</div>`).join("");
   return `<div class="doc-head">
-  ${q ? `<img class="doc-logo" src="${escDoc(q)}" alt="" onerror="this.remove()" />` : ""}
+  ${q ? `<img class="doc-logo" src="${escDoc(q)}" alt="Logo da empresa" loading="eager" decoding="sync" />` : ""}
   <div class="doc-emp">
-    ${x ? `<img class="doc-wordmark" src="${escDoc(x)}" alt="${escDoc(empresaNome())}" onerror="this.remove()" />` : `<div class="doc-nome">${escDoc(empresaNome())}</div>`}
+    ${x ? `<img class="doc-wordmark" src="${escDoc(x)}" alt="${escDoc(empresaNome())}" loading="eager" decoding="sync" />` : `<div class="doc-nome">${escDoc(empresaNome())}</div>`}
     ${x ? `<div class="doc-nome sm">${escDoc(empresaNome())}</div>` : ""}
     <div class="doc-info">${linhas}</div>
   </div>
@@ -2010,7 +2020,7 @@ ${pags.length > 1 ? `<h3>Formas de pagamento</h3>
 ${op.obs ? `<div class="rc-note"><strong>Observação:</strong> ${escDoc(op.obs)}</div>` : ""}
 ${state.empresa && state.empresa.obsRecibo ? `<div class="rc-note">${escDoc(state.empresa.obsRecibo)}</div>` : ""}
 <div class="assinatura"><div>${venda ? "Cliente" : "Fornecedor"}<small>${escDoc(op.pessoa || "")}</small></div><div>${escDoc(empresaNome())}<small>Responsável</small></div></div>
-<div class="rc-foot"><span>Deus seja louvado.</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
+<div class="rc-foot"><span>Documento sem valor fiscal</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
 </div>`;
 }
 if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
