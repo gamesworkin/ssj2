@@ -2010,7 +2010,7 @@ ${pags.length > 1 ? `<h3>Formas de pagamento</h3>
 ${op.obs ? `<div class="rc-note"><strong>Observação:</strong> ${escDoc(op.obs)}</div>` : ""}
 ${state.empresa && state.empresa.obsRecibo ? `<div class="rc-note">${escDoc(state.empresa.obsRecibo)}</div>` : ""}
 <div class="assinatura"><div>${venda ? "Cliente" : "Fornecedor"}<small>${escDoc(op.pessoa || "")}</small></div><div>${escDoc(empresaNome())}<small>Responsável</small></div></div>
-<div class="rc-foot"><span>Documento sem valor fiscal</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
+<div class="rc-foot"><span>Deus seja louvado.</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
 </div>`;
 }
 if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
