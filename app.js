@@ -27,12 +27,81 @@ import {
   createUserWithEmailAndPassword, updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getDatabase, ref, push, set, update, remove, onValue, get, child,
+  getDatabase, ref, push as _push, set as _set, update as _update, remove as _remove, onValue, get, child,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
+
+
+/* ------------------------------ LOG DE OPERAÇÕES ------------------------- */
+/* Toda gravação no banco passa por estes wrappers e gera um registro em "logs". */
+const MODULOS = {
+  produtos: "Produtos", lancamentos: "Lançamentos", ajustes: "Estoque (ajustes)", contas: "Contas/caixas",
+  financeiro: "Financeiro", usuarios: "Funcionários", "config/ui": "Interface", "config/empresa": "Dados da empresa", config: "Configurações",
+};
+function moduloDe(path) {
+  if (path.startsWith("config/ui")) return MODULOS["config/ui"];
+  if (path.startsWith("config/empresa")) return MODULOS["config/empresa"];
+  const raiz = path.split("/")[0];
+  return MODULOS[raiz] || raiz || "(raiz)";
+}
+function resumoValor(v) {
+  if (v == null) return "";
+  if (typeof v !== "object") return String(v).slice(0, 120);
+  const campos = ["nome", "produtoNome", "descricao", "tipo", "pessoa", "peso", "total", "valor", "email", "cargo", "razao", "status"];
+  const partes = [];
+  campos.forEach((c) => { if (v[c] != null && v[c] !== "" && typeof v[c] !== "object") partes.push(c + ": " + String(v[c]).slice(0, 60)); });
+  if (!partes.length) partes.push(Object.keys(v).length + " campo(s): " + Object.keys(v).slice(0, 6).join(", "));
+  return partes.join(" | ");
+}
+function registrarLog(acao, path, detalhe) {
+  try {
+    const u = auth.currentUser;
+    if (!u || String(path || "").startsWith("logs")) return;
+    const p = (typeof state !== "undefined" && state.perfil) || {};
+    const nome = [p.nome, p.sobrenome].filter(Boolean).join(" ") || u.displayName || u.email;
+    _push(ref(db, "logs"), {
+      ts: Date.now(), uid: u.uid, email: u.email || "", nome,
+      acao, modulo: path ? moduloDe(path) : "Sessão", caminho: path || "", detalhe: String(detalhe || "").slice(0, 400),
+    }).catch((e) => console.warn("Falha ao gravar log:", e && e.code));
+  } catch (e) { console.warn("Log:", e); }
+}
+const pathDe = (r) => { try { return decodeURIComponent(new URL(r.toString()).pathname.replace(/^\//, "")); } catch (e) { return ""; } };
+function set(r, v) {
+  const p = pathDe(r);
+  const res = _set(r, v);
+  Promise.resolve(res).then(() => registrarLog(v == null ? "Exclusão" : "Alteração", p, resumoValor(v))).catch(() => {});
+  return res;
+}
+function update(r, v) {
+  const p = pathDe(r);
+  const res = _update(r, v);
+  Promise.resolve(res).then(() => {
+    const keys = Object.keys(v || {});
+    const multi = keys.some((k) => k.includes("/"));
+    if (multi) {
+      const exc = keys.filter((k) => v[k] === null).length;
+      registrarLog(exc === keys.length ? "Exclusão" : "Alteração", (p ? p + "/" : "") + keys[0], keys.length + " registro(s) atualizados" + (exc ? `, ${exc} removido(s)` : ""));
+    } else registrarLog("Alteração", p, resumoValor(v));
+  }).catch(() => {});
+  return res;
+}
+function remove(r) {
+  const p = pathDe(r);
+  const res = _remove(r);
+  Promise.resolve(res).then(() => registrarLog("Exclusão", p, "Registro " + p.split("/").pop() + " removido")).catch(() => {});
+  return res;
+}
+function push(r, v) {
+  const res = _push(r, v);
+  if (v !== undefined) {
+    const p = pathDe(r);
+    Promise.resolve(res).then(() => registrarLog("Criação", p + "/" + res.key, resumoValor(v))).catch(() => {});
+  }
+  return res;
+}
 
 /* ------------------------------ helpers ---------------------------------- */
 const $ = (s) => document.querySelector(s);
@@ -73,7 +142,7 @@ function loader(on, text = "Carregando sistema...") {
 }
 
 /* ------------------------------ estado ----------------------------------- */
-const state = { produtos: {}, lancamentos: {}, ajustes: {}, contas: {}, financeiro: {}, ui: {}, usuarios: {}, perfil: null, user: null, editLanc: null, editProd: null, editMov: null, editConta: null, editUser: null, fotoTmp: "", usrFoto: "", carrinho: [] };
+const state = { produtos: {}, lancamentos: {}, ajustes: {}, contas: {}, financeiro: {}, ui: {}, empresa: {}, logs: {}, usuarios: {}, perfil: null, user: null, editLanc: null, editProd: null, editMov: null, editConta: null, editUser: null, fotoTmp: "", usrFoto: "", carrinho: [] };
 /* fracionamento de pagamentos: definidos cedo pois são usados pelos
    renderizadores iniciais da tela */
 const cent = (v) => Math.round(num(v) * 100) / 100;
@@ -115,12 +184,79 @@ applyTheme(localStorage.getItem("theme") || "dark");
 $("#themeFabLogin").onclick = toggleTheme;
 $("#themeBtn").onclick = toggleTheme;
 
+/* ------------------------------ logos / imagens ------------------------- */
+function logoQuadrada() { return (state.empresa && state.empresa.logo) || (state.ui && state.ui.logo) || ""; }
+function logoExtenso() { return (state.empresa && state.empresa.logoExtenso) || (state.ui && state.ui.logoExtenso) || ""; }
+function aplicaLogosCabecalho() {
+  const q = (state.ui && state.ui.logo) || logoQuadrada();
+  if (q) {
+    $("#logoImg").src = q;
+    const bl = $("#brandLogo"); if (bl) { bl.style.display = ""; bl.src = q; }
+  }
+  const ext = (state.ui && state.ui.logoExtenso) || logoExtenso();
+  const wm = $("#brandWordmark");
+  if (wm) {
+    if (ext) { wm.src = ext; wm.alt = (state.ui && state.ui.brand) || ""; wm.classList.remove("hidden"); $("#brandName").classList.add("hidden"); }
+    else { wm.removeAttribute("src"); wm.classList.add("hidden"); $("#brandName").classList.remove("hidden"); }
+  }
+}
+function atualizaPreview(sel) {
+  const img = document.querySelector(`img[data-preview="${sel}"]`);
+  const v = ($(sel) && $(sel).value.trim()) || "";
+  if (!img) return;
+  if (v) { img.src = v; img.parentElement.classList.remove("vazio"); }
+  else { img.removeAttribute("src"); img.parentElement.classList.add("vazio"); }
+}
+/* converte imagem enviada em base64 (reduz se for muito grande) */
+function arquivoParaBase64(file, maxLado = 800) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onerror = rej;
+    fr.onload = () => {
+      const dataUrl = fr.result;
+      if (file.type === "image/svg+xml" || file.size < 150 * 1024) return res(dataUrl);
+      const im = new Image();
+      im.onload = () => {
+        const esc = Math.min(1, maxLado / Math.max(im.width, im.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(im.width * esc); c.height = Math.round(im.height * esc);
+        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+        res(c.toDataURL("image/png"));
+      };
+      im.onerror = () => res(dataUrl);
+      im.src = dataUrl;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+$$("input[type=file][data-b64]").forEach((inp) => {
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) return toast("Selecione um arquivo de imagem.", true);
+    if (f.size > 5 * 1024 * 1024) return toast("Imagem muito grande (máx. 5 MB).", true);
+    const b64 = await arquivoParaBase64(f);
+    $(inp.dataset.b64).value = b64;
+    atualizaPreview(inp.dataset.b64);
+    inp.value = "";
+    toast("Imagem carregada. Clique em salvar para aplicar.");
+  };
+});
+$$("[data-clear]").forEach((b) => (b.onclick = () => { $(b.dataset.clear).value = ""; atualizaPreview(b.dataset.clear); }));
+$$("img[data-preview]").forEach((img) => {
+  const sel = img.dataset.preview;
+  img.onerror = () => img.parentElement.classList.add("vazio");
+  img.onload = () => img.parentElement.classList.remove("vazio");
+  $(sel).addEventListener("input", () => atualizaPreview(sel));
+});
+
 /* ------------------------------ interface editável ----------------------- */
 const UI_DEFAULT = {
   brand: "Sistema Gerencial Sucata São José",
   loginTitle: "Sucata São José",
   loginSubtitle: "Entre com suas credenciais",
   logo: "logo.png",
+  logoExtenso: "",
   primary: "#22c55e",
   accent: "#38bdf8",
   radius: 12,
@@ -141,14 +277,15 @@ function applyUI(ui) {
   $("#brandName").textContent = u.brand;
   $("#loginTitle").textContent = u.loginTitle;
   $("#loginSubtitle").textContent = u.loginSubtitle;
-  if (u.logo) { $("#logoImg").src = u.logo; $("#brandLogo") && ($("#brandLogo").src = u.logo); }
+  aplicaLogosCabecalho();
   const labels = String(u.menu).split(",");
-  $$(".nav-item").filter((b) => !["perfil", "usuarios"].includes(b.dataset.view))
+  $$(".nav-item").filter((b) => !["perfil", "usuarios", "empresa", "log"].includes(b.dataset.view))
     .forEach((b, i) => { if (labels[i]) b.querySelector("span").textContent = labels[i].trim(); });
   if (!localStorage.getItem("theme")) applyTheme(u.theme);
   // preencher formulário admin
   $("#uiBrand").value = u.brand; $("#uiLoginTitle").value = u.loginTitle;
   $("#uiLoginSubtitle").value = u.loginSubtitle; $("#uiLogo").value = u.logo;
+  $("#uiLogoExtenso").value = u.logoExtenso || ""; atualizaPreview("#uiLogoExtenso");
   $("#uiPrimary").value = u.primary; $("#uiAccent").value = u.accent;
   $("#uiRadius").value = u.radius; $("#uiFont").value = u.font;
   $("#uiTheme").value = u.theme; $("#uiMoeda").value = u.moeda; $("#uiMenu").value = u.menu;
@@ -161,6 +298,7 @@ $("#uiForm").addEventListener("submit", async (e) => {
   const ui = {
     brand: $("#uiBrand").value, loginTitle: $("#uiLoginTitle").value,
     loginSubtitle: $("#uiLoginSubtitle").value, logo: $("#uiLogo").value,
+    logoExtenso: $("#uiLogoExtenso").value.trim(),
     primary: $("#uiPrimary").value, accent: $("#uiAccent").value,
     radius: num($("#uiRadius").value) || 12, font: num($("#uiFont").value) || 15,
     theme: $("#uiTheme").value, moeda: $("#uiMoeda").value || "R$", menu: $("#uiMenu").value,
@@ -181,7 +319,8 @@ $("#loginForm").addEventListener("submit", async (e) => {
   loader(true, "Autenticando...");
   try {
     await setPersistence(auth, browserLocalPersistence);
-    await signInWithEmailAndPassword(auth, $("#email").value.trim(), $("#password").value);
+    const cred = await signInWithEmailAndPassword(auth, $("#email").value.trim(), $("#password").value);
+    _push(ref(db, "logs"), { ts: Date.now(), uid: cred.user.uid, email: cred.user.email || "", nome: cred.user.displayName || cred.user.email, acao: "Login", modulo: "Sessão", caminho: "", detalhe: "Entrou no sistema" }).catch(() => {});
   } catch (err) {
     loader(false);
     msg.className = "msg error";
@@ -216,7 +355,10 @@ function traduzErro(code) {
   };
   return m[code] || "Erro: " + code;
 }
-$("#logoutBtn").onclick = () => signOut(auth);
+$("#logoutBtn").onclick = async () => {
+  try { const u = auth.currentUser; if (u) await _push(ref(db, "logs"), { ts: Date.now(), uid: u.uid, email: u.email || "", nome: (state.perfil && state.perfil.nome) || u.email, acao: "Logout", modulo: "Sessão", caminho: "", detalhe: "Saiu do sistema" }); } catch (e) {}
+  signOut(auth);
+};
 
 onAuthStateChanged(auth, (user) => {
   state.user = user;
@@ -266,11 +408,13 @@ let loadedOnce = false;
 let loaderTimer = null;
 let unsubs = [];
 let usuariosWatching = false;
+let logsWatching = false;
 
 function stopListeners() {
   unsubs.forEach((u) => { try { u(); } catch (e) {} });
   unsubs = [];
   usuariosWatching = false;
+  logsWatching = false;
   clearTimeout(loaderTimer);
 }
 
@@ -308,6 +452,7 @@ function startListeners() {
     if (v) localStorage.setItem("uiCache", JSON.stringify(v));
     applyUI(v);
   });
+  watch("config/empresa", (v) => { state.empresa = v || {}; preencheEmpresa(); aplicaLogosCabecalho(); });
   watch("produtos", (v) => { state.produtos = v || {}; renderProdutos(); fillProductSelects(); renderAll(); });
   watch("lancamentos", (v) => { state.lancamentos = v || {}; renderAll(); });
   watch("ajustes", (v) => { state.ajustes = v || {}; renderAll(); });
@@ -353,6 +498,10 @@ function startListeners() {
     preencherPerfil();
     aplicarAcessos();
     /* a lista completa de funcionários é visível apenas ao administrador */
+    if (isAdmin() && !logsWatching) {
+      logsWatching = true;
+      watch("logs", (v) => { state.logs = v || {}; renderLog(); });
+    }
     if (isAdmin() && !usuariosWatching) {
       usuariosWatching = true;
       watch("usuarios", (all) => { state.usuarios = all || {}; renderUsuarios(); });
@@ -1754,6 +1903,13 @@ const DOC_CSS = `
   .rodape { margin-top:14px; color:#777; font-size:10px; }
   .aviso { margin:8px 0; padding:6px 8px; border:1px dashed #999; color:#444; font-size:11px; }
   thead { display:table-header-group; }
+  .doc-head { display:flex; align-items:center; gap:14px; border-bottom:2px solid #222; padding-bottom:10px; margin-bottom:12px; }
+  .doc-logo { width:72px; height:72px; object-fit:contain; flex:none; }
+  .doc-emp { flex:1; min-width:0; }
+  .doc-wordmark { max-height:46px; max-width:320px; object-fit:contain; display:block; margin-bottom:3px; }
+  .doc-nome { font-size:17px; font-weight:bold; }
+  .doc-nome.sm { font-size:12px; }
+  .doc-info { color:#444; font-size:10.5px; line-height:1.45; }
   tr { page-break-inside:avoid; }
 `;
 function abrirDoc(titulo, corpo) {
@@ -1766,7 +1922,26 @@ function abrirDoc(titulo, corpo) {
   w.focus();
   setTimeout(() => w.print(), 400);
 }
-const empresaNome = () => (state.ui && state.ui.brand) || "Sistema Gerencial";
+const empresaNome = () => (state.empresa && (state.empresa.fantasia || state.empresa.razao)) || (state.ui && state.ui.brand) || "Sistema Gerencial";
+function cabecalhoEmpresaHTML() {
+  const e = state.empresa || {};
+  const q = logoQuadrada(), x = logoExtenso();
+  const end1 = [e.endereco, e.numero, e.compl].filter(Boolean).join(", ");
+  const end2 = [e.bairro, [e.cidade, e.uf].filter(Boolean).join("/"), e.cep ? "CEP " + e.cep : ""].filter(Boolean).join(" — ");
+  const docs = [e.cnpj ? "CNPJ/CPF: " + e.cnpj : "", e.ie ? "IE: " + e.ie : "", e.im ? "IM: " + e.im : ""].filter(Boolean).join("  ·  ");
+  const cont = [e.tel ? "Tel: " + e.tel : "", e.whats ? "WhatsApp: " + e.whats : "", e.email, e.site].filter(Boolean).join("  ·  ");
+  const linhas = [
+    e.razao && e.fantasia && e.razao !== e.fantasia ? e.razao : "", docs, end1, end2, cont,
+  ].filter(Boolean).map((l) => `<div>${escDoc(l)}</div>`).join("");
+  return `<div class="doc-head">
+  ${q ? `<img class="doc-logo" src="${escDoc(q)}" alt="" onerror="this.remove()" />` : ""}
+  <div class="doc-emp">
+    ${x ? `<img class="doc-wordmark" src="${escDoc(x)}" alt="${escDoc(empresaNome())}" onerror="this.remove()" />` : `<div class="doc-nome">${escDoc(empresaNome())}</div>`}
+    ${x ? `<div class="doc-nome sm">${escDoc(empresaNome())}</div>` : ""}
+    <div class="doc-info">${linhas}</div>
+  </div>
+</div>`;
+}
 
 /* ------------------------------ recibo ----------------------------------- */
 function reciboHTML(op) {
@@ -1783,8 +1958,9 @@ function reciboHTML(op) {
     <td class="r">${money(i.preco)}</td>
     <td class="r">${money(i.total)}</td>
     <td>${escDoc(i.obs || "-")}</td></tr>`).join("");
-  return `<h1>${escDoc(empresaNome())}</h1>
-<h2>${titulo} — ${escDoc(dtLocal(op.data))}</h2>
+  return `${cabecalhoEmpresaHTML()}
+<h1>${titulo}</h1>
+<h2>${escDoc(dtLocal(op.data))}</h2>
 <div class="kpis">
   <div class="kpi"><span>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</span><strong>${escDoc(op.pessoa || "Não informado")}</strong></div>
   <div class="kpi"><span>Conta / caixa</span><strong>${escDoc(pags.map((p) => contaNome(p.contaId)).join(" \u00b7 "))}</strong></div>
@@ -1802,6 +1978,7 @@ ${pags.length > 1 ? `<h3>Formas de pagamento</h3>
 <tfoot><tr><td>Total</td><td class="r">${money(pags.reduce((s, p) => s + num(p.valor), 0))}</td></tr></tfoot></table>` : ""}
 ${op.obs ? `<p><strong>Observação:</strong> ${escDoc(op.obs)}</p>` : ""}
 <div class="assinatura"><div>${op.tipo === "venda" ? "Cliente" : "Fornecedor"}</div><div>${escDoc(empresaNome())}</div></div>
+${state.empresa && state.empresa.obsRecibo ? `<p class="aviso">${escDoc(state.empresa.obsRecibo)}</p>` : ""}
 <p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`;
 }
 if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
@@ -2348,7 +2525,7 @@ function aplicarAcessos() {
   $$(".nav-item").forEach((b) => {
     const v = b.dataset.view;
     if (v === "perfil") { b.classList.remove("hidden"); return; }
-    if (v === "usuarios") { b.classList.toggle("hidden", !isAdmin()); return; }
+    if (["usuarios", "empresa", "log"].includes(v)) { b.classList.toggle("hidden", !isAdmin()); return; }
     b.classList.toggle("hidden", !podeVer(v));
   });
   const ativo = $$(".nav-item").find((b) => b.classList.contains("active"));
@@ -2501,3 +2678,75 @@ $("#usuarioForm") && $("#usuarioForm").addEventListener("submit", async (e) => {
 });
 
 limparFormUsuario();
+
+
+/* ==========================================================================
+   MÓDULO: DADOS DA EMPRESA
+   ========================================================================== */
+const EMP_CAMPOS = {
+  razao: "#empRazao", fantasia: "#empFantasia", cnpj: "#empCnpj", ie: "#empIE", im: "#empIM", resp: "#empResp",
+  endereco: "#empEndereco", numero: "#empNumero", compl: "#empCompl", bairro: "#empBairro", cidade: "#empCidade",
+  uf: "#empUF", cep: "#empCep", tel: "#empTel", whats: "#empWhats", email: "#empEmail", site: "#empSite",
+  logo: "#empLogo", logoExtenso: "#empLogoExtenso", obsRecibo: "#empObsRecibo",
+};
+function preencheEmpresa() {
+  const e = state.empresa || {};
+  Object.entries(EMP_CAMPOS).forEach(([k, s]) => { if ($(s)) $(s).value = e[k] || ""; });
+  atualizaPreview("#empLogo"); atualizaPreview("#empLogoExtenso");
+}
+if ($("#empForm")) $("#empForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!isAdmin()) return toast("Apenas o administrador pode alterar os dados da empresa.", true);
+  const dados = {};
+  Object.entries(EMP_CAMPOS).forEach(([k, s]) => { dados[k] = ($(s).value || "").trim(); });
+  dados.uf = dados.uf.toUpperCase();
+  dados.atualizadoEm = Date.now();
+  try { await set(ref(db, "config/empresa"), dados); toast("Dados da empresa salvos."); }
+  catch (err) { toast("Erro ao salvar: " + (err.code || err.message), true); }
+});
+
+/* ==========================================================================
+   MÓDULO: LOG DE OPERAÇÕES (ADMIN)
+   ========================================================================== */
+function logsArray() {
+  return Object.entries(state.logs || {}).map(([id, l]) => ({ id, ...l })).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+function logsFiltrados() {
+  const u = $("#logUsuario").value, a = $("#logAcao").value, q = $("#logBusca").value.trim().toLowerCase();
+  const de = $("#logDe").value ? new Date($("#logDe").value + "T00:00:00").getTime() : 0;
+  const ate = $("#logAte").value ? new Date($("#logAte").value + "T23:59:59").getTime() : Infinity;
+  return logsArray().filter((l) => (!u || l.uid === u) && (!a || l.acao === a) && l.ts >= de && l.ts <= ate &&
+    (!q || [l.nome, l.email, l.modulo, l.detalhe, l.caminho].join(" ").toLowerCase().includes(q)));
+}
+function renderLog() {
+  const tb = $("#tblLog tbody");
+  if (!tb) return;
+  const sel = $("#logUsuario"), atual = sel.value;
+  const users = {};
+  logsArray().forEach((l) => { if (l.uid && !users[l.uid]) users[l.uid] = l.nome || l.email; });
+  Object.entries(state.usuarios || {}).forEach(([uid, x]) => { users[uid] = [x.nome, x.sobrenome].filter(Boolean).join(" ") || x.email || users[uid]; });
+  sel.innerHTML = `<option value="">Todos</option>` + Object.entries(users).sort((a, b) => String(a[1]).localeCompare(String(b[1])))
+    .map(([id, n]) => `<option value="${id}">${escDoc(n)}</option>`).join("");
+  sel.value = atual;
+  const rows = logsFiltrados();
+  $("#logTotal").textContent = rows.length + " registro(s)";
+  const cls = { "Criação": "entrada", "Alteração": "pendente", "Exclusão": "saida", "Login": "pago", "Logout": "" };
+  const vis = typeof paginar === "function" ? paginar("log", rows) : rows.slice(0, 200);
+  tb.innerHTML = vis.map((l) => `<tr>
+    <td class="small">${escDoc(dtLocal(l.ts))}</td>
+    <td>${escDoc(l.nome || "-")}<br><span class="muted small">${escDoc(l.email || "")}</span></td>
+    <td><span class="tag ${cls[l.acao] || ""}">${escDoc(l.acao)}</span></td>
+    <td>${escDoc(l.modulo || "-")}</td>
+    <td class="small">${escDoc(l.detalhe || "")}${l.caminho ? `<br><span class="muted">${escDoc(l.caminho)}</span>` : ""}</td>
+  </tr>`).join("") || `<tr><td colspan="5" class="muted">Nenhum registro.</td></tr>`;
+  if (typeof renderPager === "function") renderPager("tblLog", "log", rows.length, renderLog, "registros");
+}
+["#logUsuario", "#logAcao", "#logDe", "#logAte", "#logBusca"].forEach((s) => {
+  const el = $(s); if (!el) return;
+  el.addEventListener(s === "#logBusca" ? "input" : "change", () => { if (typeof resetPagina === "function") resetPagina("log"); renderLog(); });
+});
+if ($("#logCsv")) $("#logCsv").onclick = () => {
+  const rows = [["Data/hora", "Usuário", "E-mail", "Ação", "Módulo", "Detalhes", "Caminho"]]
+    .concat(logsFiltrados().map((l) => [dtLocal(l.ts), l.nome || "", l.email || "", l.acao || "", l.modulo || "", l.detalhe || "", l.caminho || ""]));
+  baixar(csv(rows), "log-operacoes.csv", "text/csv;charset=utf-8");
+};
