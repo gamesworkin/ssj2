@@ -1,11 +1,5 @@
 /* ============================================================================
    SISTEMA GERENCIAL DE RECICLAGEM
-   ----------------------------------------------------------------------------
-   1) COLE SUAS CREDENCIAIS DO FIREBASE ABAIXO (Console Firebase > Configurações
-      do projeto > Seus apps > Configuração do SDK).
-   2) Ative "Authentication > E-mail/senha" e crie o usuário admin@admin.com.
-   3) Ative o "Realtime Database" e publique as regras do arquivo
-      database.rules.json (fornecido junto com este projeto).
    ========================================================================== */
 
 const firebaseConfig = {
@@ -926,7 +920,10 @@ if ($("#relProdNenhum")) $("#relProdNenhum").onclick = () => {
   renderRelatorio();
 };
 function relMovTipo() { return ($("#relMovTipo") && $("#relMovTipo").value) || ""; }
-$("#relPrint").onclick = () => window.print();
+$("#relPrint").onclick = () => {
+  const w = $("#tblRel") && $("#tblRel").closest(".table-wrap");
+  if (w) pdfDeTabela(w, true); else window.print();
+};
 
 /* semana (segunda a domingo) que contém a data informada (YYYY-MM-DD) */
 function semanaDe(iso) {
@@ -1829,33 +1826,7 @@ $("#finCsv").onclick = () => {
       <td class="r"><strong>${money(obj[k].e - obj[k].s)}</strong></td></tr>`).join("")
       || `<tr><td colspan="4">Sem dados no período.</td></tr>`}</tbody></table>`;
 
-    const empresa = (state.ui && state.ui.brand) || "Relatório financeiro";
-
-    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
-<title>${esc(p.titulo)} — ${esc(p.label)}</title>
-<style>
-  @page { size: A4; margin: 14mm; }
-  * { box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 12px; margin: 0; }
-  h1 { font-size: 18px; margin: 0 0 2px; }
-  h2 { font-size: 13px; font-weight: normal; color: #555; margin: 0 0 14px; }
-  h3 { font-size: 13px; margin: 18px 0 6px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-  th, td { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; vertical-align: top; }
-  th { background: #f2f2f2; font-size: 11px; }
-  td.r, th.r { text-align: right; white-space: nowrap; }
-  .kpis { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
-  .kpi { border: 1px solid #ddd; border-radius: 6px; padding: 6px 10px; min-width: 120px; }
-  .kpi span { display: block; color: #666; font-size: 10px; text-transform: uppercase; }
-  .kpi strong { font-size: 14px; }
-  tfoot td { font-weight: bold; background: #f8f8f8; }
-  .rodape { margin-top: 16px; color: #777; font-size: 10px; }
-  thead { display: table-header-group; }
-  tr { page-break-inside: avoid; }
-</style></head><body>
-<h1>${esc(empresa)}</h1>
-<h2>${esc(p.titulo)} — ${esc(p.label)}${contaFiltro ? " — conta: " + esc(contaNome(contaFiltro)) : " — todas as contas"}</h2>
-<div class="kpis">
+    abrirDocPadrao(p.titulo, `${p.label}${contaFiltro ? " — conta: " + contaNome(contaFiltro) : " — todas as contas"}`, `<div class="kpis">
   <div class="kpi"><span>Entradas</span><strong>${money(ent)}</strong></div>
   <div class="kpi"><span>Saídas</span><strong>${money(sai)}</strong></div>
   <div class="kpi"><span>Resultado</span><strong>${money(ent - sai)}</strong></div>
@@ -1868,15 +1839,7 @@ ${tabela(porCat, "Resumo por categoria")}
 <h3>Extrato do período</h3>
 <table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th class="r">Entrada</th><th class="r">Saída</th></tr></thead>
 <tbody>${linhas || `<tr><td colspan="6">Nenhum movimento no período.</td></tr>`}</tbody>
-<tfoot><tr><td colspan="4">Totais (pagos)</td><td class="r">${money(ent)}</td><td class="r">${money(sai)}</td></tr></tfoot></table>
-<p class="rodape">Emitido em ${esc(dtLocal(new Date().toISOString()))}</p>
-</body></html>`;
-
-    const w = window.open("", "_blank");
-    if (!w) return toast("Permita pop-ups para gerar o relatório.", true);
-    w.document.open(); w.document.write(html); w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 400);
+<tfoot><tr><td colspan="4">Totais (pagos)</td><td class="r">${money(ent)}</td><td class="r">${money(sai)}</td></tr></tfoot></table>`);
   };
 })();
 
@@ -1912,70 +1875,11 @@ const DOC_CSS = `
   .doc-head { display:flex; align-items:center; gap:14px; border-bottom:2px solid #222; padding-bottom:10px; margin-bottom:12px; break-inside:avoid; page-break-inside:avoid; }
   .doc-logo { width:72px; height:72px; object-fit:contain; flex:none; }
   .doc-emp { flex:1; min-width:0; }
-  .doc-wordmark { max-height:46px; max-width:320px; object-fit:contain; display:block; margin-bottom:3px; }
+  .doc-wordmark { max-height:30px; max-width:210px; object-fit:contain; display:block; margin-bottom:3px; }
   .doc-nome { font-size:17px; font-weight:bold; }
   .doc-nome.sm { font-size:12px; }
   .doc-info { color:#444; font-size:10.5px; line-height:1.45; }
   tr { page-break-inside:avoid; }
-  .doc-print-controls { display:flex; align-items:center; gap:16px; margin:0 0 18px; padding:12px; background:#f2f2f2; border:1px solid #ccc; }
-  .doc-print-controls span { flex:1; }
-  .doc-print-controls button { padding:8px 12px; cursor:pointer; flex:none; }
-  .doc-print-warning { display:none; }
-  @media print {
-    .doc-print-controls { display:none !important; }
-    .doc-head img { display:block !important; visibility:visible !important; opacity:1 !important; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-    .doc-print-blocked > :not(.doc-print-warning) { display:none !important; }
-    .doc-print-blocked > .doc-print-warning { display:block !important; }
-  }
-`;
-function abrirDoc(titulo, corpo) {
-  const w = window.open("", "_blank");
-  if (!w) return toast("Permita pop-ups para gerar o documento.", true);
-  w.document.open();
-  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
-<title>${escDoc(titulo)}</title><base href="${escDoc(document.baseURI)}"><style>${DOC_CSS}</style></head><body>${corpo}</body></html>`);
-  w.document.close();
-  prepararImpressao(w);
-}
-const empresaNome = () => (state.empresa && (state.empresa.fantasia || state.empresa.razao)) || (state.ui && state.ui.brand) || "Sistema Gerencial";
-function cabecalhoEmpresaHTML() {
-  const e = state.empresa || {};
-  const q = logoQuadrada(), x = logoExtenso();
-  const end1 = [e.endereco, e.numero, e.compl].filter(Boolean).join(", ");
-  const end2 = [e.bairro, [e.cidade, e.uf].filter(Boolean).join("/"), e.cep ? "CEP " + e.cep : ""].filter(Boolean).join(" — ");
-  const docs = [e.cnpj ? "CNPJ/CPF: " + e.cnpj : "", e.ie ? "IE: " + e.ie : "", e.im ? "IM: " + e.im : ""].filter(Boolean).join("  ·  ");
-  const cont = [e.tel ? "Tel: " + e.tel : "", e.whats ? "WhatsApp: " + e.whats : "", e.email, e.site].filter(Boolean).join("  ·  ");
-  const linhas = [
-    e.razao && e.fantasia && e.razao !== e.fantasia ? e.razao : "", docs, end1, end2, cont,
-  ].filter(Boolean).map((l) => `<div>${escDoc(l)}</div>`).join("");
-  return `<div class="doc-head">
-  ${q ? `<img class="doc-logo" src="${escDoc(q)}" alt="Logo da empresa" loading="eager" decoding="sync" />` : ""}
-  <div class="doc-emp">
-    ${x ? `<img class="doc-wordmark" src="${escDoc(x)}" alt="${escDoc(empresaNome())}" loading="eager" decoding="sync" />` : `<div class="doc-nome">${escDoc(empresaNome())}</div>`}
-    ${x ? `<div class="doc-nome sm">${escDoc(empresaNome())}</div>` : ""}
-    <div class="doc-info">${linhas}</div>
-  </div>
-</div>`;
-}
-
-/* ------------------------------ recibo ----------------------------------- */
-function reciboHTML(op) {
-  const venda = op.tipo === "venda";
-  const titulo = venda ? "Recibo de venda" : "Recibo de compra";
-  const totalGeral = op.itens.reduce((s, i) => s + num(i.total), 0);
-  const pags = (Array.isArray(op.pagamentos) && op.pagamentos.length)
-    ? op.pagamentos.map((p) => ({ contaId: p.contaId, valor: cent(p.valor) })).filter((p) => p.valor > 0)
-    : [{ contaId: op.contaId, valor: cent(totalGeral) }];
-  const tKg = op.itens.filter((i) => (i.unidade || "kg") !== "un").reduce((s, i) => s + num(i.peso), 0);
-  const tUn = op.itens.filter((i) => (i.unidade || "kg") === "un").reduce((s, i) => s + num(i.peso), 0);
-  const numero = String(op.id || "").slice(-8).toUpperCase() || "—";
-  const linhas = op.itens.map((i, n) => `<tr>
-    <td class="c">${n + 1}</td>
-    <td><strong>${escDoc(i.produtoNome || prodNome(i.produtoId))}</strong>${i.obs ? `<div class="rc-obs">${escDoc(i.obs)}</div>` : ""}</td>
-    <td class="r">${qtd(i.peso, i.unidade || "kg")}</td>
-    <td class="r">${money(i.preco)}</td>
-    <td class="r"><strong>${money(i.total)}</strong></td></tr>`).join("");
-  const css = `<style>
   .rc { --ac:#1f3a5f; --ac2:#e8eef6; font-family:"Segoe UI",Arial,Helvetica,sans-serif; color:#1b1f24; }
   .rc .doc-head { border-bottom:3px solid var(--ac); }
   .rc-band { display:flex; justify-content:space-between; align-items:stretch; background:var(--ac); color:#fff; border-radius:8px; padding:12px 16px; margin:4px 0 14px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
@@ -2003,8 +1907,154 @@ function reciboHTML(op) {
   .rc .assinatura div { border-top:1px solid #1b1f24; color:#1b1f24; font-size:11px; }
   .rc .assinatura small { display:block; color:#6b7684; font-size:9.5px; }
   .rc-foot { margin-top:18px; padding-top:8px; border-top:1px solid #d6dde6; display:flex; justify-content:space-between; color:#8a94a2; font-size:9.5px; }
-  </style>`;
-  return `${css}<div class="rc">${cabecalhoEmpresaHTML()}
+  .rc .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; margin:0 0 12px; }
+  .rc .kpi { border:1px solid #d6dde6; border-radius:8px; padding:8px 12px; min-width:0; }
+  .rc .kpi span { font-size:9.5px; letter-spacing:.6px; color:#6b7684; }
+  .rc .kpi strong { font-size:14px; color:var(--ac); }
+  .rc tfoot td { background:var(--ac2) !important; color:var(--ac); font-weight:bold; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .rc .aviso { border:1px dashed var(--ac); background:#f6f8fb; border-radius:6px; padding:8px 12px; }
+  .rc h2 { color:#6b7684; font-size:12px; margin:0 0 10px; }
+  .rc table { margin-bottom:12px; }
+  .doc-print-controls { display:flex; align-items:center; gap:16px; margin:0 0 18px; padding:12px; background:#f2f2f2; border:1px solid #ccc; }
+  .doc-print-controls span { flex:1; }
+  .doc-print-controls button { padding:8px 12px; cursor:pointer; flex:none; }
+  .doc-print-warning { display:none; }
+  @media print {
+    .doc-print-controls { display:none !important; }
+    .doc-head img { display:block !important; visibility:visible !important; opacity:1 !important; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+    .doc-print-blocked > :not(.doc-print-warning) { display:none !important; }
+    .doc-print-blocked > .doc-print-warning { display:block !important; }
+  }
+`;
+function abrirDoc(titulo, corpo) {
+  const w = window.open("", "_blank");
+  if (!w) return toast("Permita pop-ups para gerar o documento.", true);
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8" />
+<title>${escDoc(titulo)}</title><base href="${escDoc(document.baseURI)}"><style>${DOC_CSS}</style></head><body>${corpo}</body></html>`);
+  w.document.close();
+  prepararImpressao(w);
+}
+const empresaNome = () => (state.empresa && state.empresa.razao) || (state.ui && state.ui.brand) || "Sistema Gerencial";
+function cabecalhoEmpresaHTML() {
+  const e = state.empresa || {};
+  const q = logoQuadrada(), x = logoExtenso();
+  const end1 = [e.endereco, e.numero, e.compl].filter(Boolean).join(", ");
+  const end2 = [e.bairro, [e.cidade, e.uf].filter(Boolean).join("/"), e.cep ? "CEP " + e.cep : ""].filter(Boolean).join(" — ");
+  const docs = [e.cnpj ? "CNPJ/CPF: " + e.cnpj : "", e.ie ? "IE: " + e.ie : "", e.im ? "IM: " + e.im : ""].filter(Boolean).join("  ·  ");
+  const cont = [e.tel ? "Tel: " + e.tel : "", e.whats ? "WhatsApp: " + e.whats : "", e.email, e.site].filter(Boolean).join("  ·  ");
+  const linhas = [
+    x && e.razao ? e.razao : "", docs, end1, end2, cont,
+  ].filter(Boolean).map((l) => `<div>${escDoc(l)}</div>`).join("");
+  return `<div class="doc-head">
+  ${q ? `<img class="doc-logo" src="${escDoc(q)}" alt="Logo da empresa" loading="eager" decoding="sync" />` : ""}
+  <div class="doc-emp">
+    ${x ? `<img class="doc-wordmark" src="${escDoc(x)}" alt="${escDoc(empresaNome())}" loading="eager" decoding="sync" />` : `<div class="doc-nome">${escDoc(empresaNome())}</div>`}
+    <div class="doc-info">${linhas}</div>
+  </div>
+</div>`;
+}
+
+/* --------------- documento padrão (mesmo visual do recibo) --------------- */
+function docPadrao(titulo, subtitulo, corpo) {
+  return `<div class="rc">${cabecalhoEmpresaHTML()}
+<div class="rc-band"><div><h1>${escDoc(titulo)}</h1><small>${escDoc(subtitulo || "")}</small></div>
+<div class="rc-n"><small>Emitido em</small><b>${escDoc(dtLocal(new Date().toISOString()))}</b></div></div>
+${corpo}
+<div class="rc-foot"><span>Deus seja louvado!</span><span>${escDoc(empresaNome())} \u00b7 Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
+</div>`;
+}
+function abrirDocPadrao(titulo, subtitulo, corpo) { abrirDoc(titulo, docPadrao(titulo, subtitulo, corpo)); }
+
+/* ---------- PDF genérico de qualquer tabela/tela do sistema ---------- */
+function tabelaParaDocHTML(tbl) {
+  const t = tbl.cloneNode(true);
+  t.removeAttribute("id");
+  t.querySelectorAll("button, .btn, input[type=checkbox], script").forEach((el) => el.remove());
+  t.querySelectorAll("input, select, textarea").forEach((el) => {
+    const v = el.tagName === "SELECT" ? (el.options[el.selectedIndex] || {}).text || "" : el.value;
+    el.replaceWith(document.createTextNode(v || ""));
+  });
+  t.querySelectorAll("[style*='display: none'], .hidden").forEach((el) => el.remove());
+  // remove colunas de ações vazias
+  const ths = [...t.querySelectorAll("thead th")];
+  ths.forEach((th, i) => {
+    if (/a[çc][õo]es|^\s*$/i.test(th.textContent)) {
+      const rows = [...t.querySelectorAll("tbody tr")];
+      if (rows.every((r) => !r.children[i] || !r.children[i].textContent.trim())) {
+        th.remove(); rows.forEach((r) => r.children[i] && r.children[i].remove());
+      }
+    }
+  });
+  t.querySelectorAll("*").forEach((el) => { el.removeAttribute("style"); el.removeAttribute("onclick"); });
+  return t.outerHTML;
+}
+function tituloDaTabela(wrap) {
+  let el = wrap.previousElementSibling;
+  while (el) {
+    if (/^H[1-4]$/.test(el.tagName) || el.classList.contains("sub")) return el.textContent.trim();
+    const h = el.querySelector && el.querySelector("h2,h3,h4,.sub");
+    if (h) return h.textContent.trim();
+    el = el.previousElementSibling;
+  }
+  const sec = wrap.closest("section");
+  const h = sec && sec.querySelector("h2,h1");
+  return (h && h.textContent.trim()) || "Relatório";
+}
+function kpisDaSecao(sec) {
+  const cards = sec ? [...sec.querySelectorAll(".cards .card")].filter((c) => c.offsetParent !== null || !sec.classList.contains("hidden")) : [];
+  if (!cards.length) return "";
+  return `<div class="kpis">${cards.map((c) => {
+    const l = c.querySelector(".card-label"), v = c.querySelector("strong");
+    return `<div class="kpi"><span>${escDoc(l ? l.textContent : "")}</span><strong>${escDoc(v ? v.textContent : "")}</strong></div>`;
+  }).join("")}</div>`;
+}
+function pdfDeTabela(wrap, comKpis) {
+  const tbl = wrap.querySelector("table");
+  if (!tbl) return;
+  if (!tbl.querySelector("tbody tr")) return toast("Não há dados para gerar o PDF.", true);
+  const sec = wrap.closest("section");
+  const secH = sec && sec.querySelector("h2");
+  const titulo = tituloDaTabela(wrap);
+  const sub = secH && secH.textContent.trim() !== titulo ? secH.textContent.trim() : "";
+  abrirDocPadrao(titulo, sub, (comKpis ? kpisDaSecao(sec) : "") + tabelaParaDocHTML(tbl));
+}
+function instalaBotoesPDF() {
+  document.querySelectorAll(".table-wrap").forEach((wrap) => {
+    if (wrap.dataset.pdf || !wrap.querySelector("table")) return;
+    wrap.dataset.pdf = "1";
+    const bar = document.createElement("div");
+    bar.className = "pdf-bar";
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn ghost mini pdf-btn";
+    b.textContent = "Imprimir / PDF";
+    b.title = "Gerar PDF desta tabela";
+    b.onclick = () => pdfDeTabela(wrap, true);
+    bar.appendChild(b);
+    wrap.parentNode.insertBefore(bar, wrap);
+  });
+}
+instalaBotoesPDF();
+new MutationObserver(() => instalaBotoesPDF()).observe(document.body, { childList: true, subtree: true });
+
+/* ------------------------------ recibo ----------------------------------- */
+function reciboHTML(op) {
+  const venda = op.tipo === "venda";
+  const titulo = venda ? "Recibo de venda" : "Recibo de compra";
+  const totalGeral = op.itens.reduce((s, i) => s + num(i.total), 0);
+  const pags = (Array.isArray(op.pagamentos) && op.pagamentos.length)
+    ? op.pagamentos.map((p) => ({ contaId: p.contaId, valor: cent(p.valor) })).filter((p) => p.valor > 0)
+    : [{ contaId: op.contaId, valor: cent(totalGeral) }];
+  const tKg = op.itens.filter((i) => (i.unidade || "kg") !== "un").reduce((s, i) => s + num(i.peso), 0);
+  const tUn = op.itens.filter((i) => (i.unidade || "kg") === "un").reduce((s, i) => s + num(i.peso), 0);
+  const numero = String(op.id || "").slice(-8).toUpperCase() || "—";
+  const linhas = op.itens.map((i, n) => `<tr>
+    <td class="c">${n + 1}</td>
+    <td><strong>${escDoc(i.produtoNome || prodNome(i.produtoId))}</strong>${i.obs ? `<div class="rc-obs">${escDoc(i.obs)}</div>` : ""}</td>
+    <td class="r">${qtd(i.peso, i.unidade || "kg")}</td>
+    <td class="r">${money(i.preco)}</td>
+    <td class="r"><strong>${money(i.total)}</strong></td></tr>`).join("");
+  return `<div class="rc">${cabecalhoEmpresaHTML()}
 <div class="rc-band"><div><h1>${titulo}</h1><small>${escDoc(dtLocal(op.data))}</small></div>
 <div class="rc-n"><small>Nº do documento</small><b>#${escDoc(numero)}</b></div></div>
 <div class="rc-grid">
@@ -2025,7 +2075,7 @@ ${pags.length > 1 ? `<h3>Formas de pagamento</h3>
 ${op.obs ? `<div class="rc-note"><strong>Observação:</strong> ${escDoc(op.obs)}</div>` : ""}
 ${state.empresa && state.empresa.obsRecibo ? `<div class="rc-note">${escDoc(state.empresa.obsRecibo)}</div>` : ""}
 <div class="assinatura"><div>${venda ? "Cliente" : "Fornecedor"}<small>${escDoc(op.pessoa || "")}</small></div><div>${escDoc(empresaNome())}<small>Responsável</small></div></div>
-<div class="rc-foot"><span>Documento sem valor fiscal</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
+<div class="rc-foot"><span>Deus seja louvado!</span><span>Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</span></div>
 </div>`;
 }
 if ($("#cxRecibo")) $("#cxRecibo").onclick = () => {
@@ -2251,8 +2301,7 @@ if ($("#cxRelDia")) $("#cxRelDia").onclick = () => {
 
   const rotulo = tipoFiltro === "compra" ? "Relatório de compras" : tipoFiltro === "venda" ? "Relatório de vendas" : "Relatório de compras e vendas";
 
-  abrirDoc(rotulo, `<h1>${escDoc(empresaNome())}</h1>
-<h2>${rotulo} — ${escDoc(dia.split("-").reverse().join("/"))}</h2>
+  abrirDocPadrao(rotulo, dia.split("-").reverse().join("/"), `
 <div class="kpis">
   <div class="kpi"><span>Movimentações</span><strong>${movs.length}</strong></div>
   <div class="kpi"><span>Quantidade</span><strong>${dual(kgT, unT)}</strong></div>
@@ -2267,7 +2316,7 @@ if ($("#cxRelDia")) $("#cxRelDia").onclick = () => {
 <table><thead><tr><th>Hora</th><th>Tipo</th><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Total</th><th>Pessoa</th><th>Obs</th></tr></thead>
 <tbody>${linhas}</tbody>
 <tfoot><tr><td colspan="5">Totais</td><td class="r">${money(tC + tV)}</td><td colspan="2"></td></tr></tfoot></table>
-<p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`);
+`);
 };
 
 /* ------------------------------ abas compra/venda ------------------------- */
@@ -2385,8 +2434,7 @@ if ($("#simPrint")) $("#simPrint").onclick = () => {
     <td class="r">${qtd(i.peso, i.unidade)}</td><td class="r">${money(i.preco)}</td>
     <td class="r">${money(i.total)}</td><td class="r">${money(i.ref)}</td>
     <td class="r">${money(simResultadoItem(i))}</td></tr>`).join("");
-  abrirDoc("Simulação", `<h1>${escDoc(empresaNome())}</h1>
-<h2>Simulação de compra / venda — ${escDoc(dtLocal(new Date().toISOString()))}</h2>
+  abrirDocPadrao("Simulação de compra / venda", "Documento de simulação", `
 <p class="aviso">Documento apenas para simulação. Nenhum lançamento foi gravado no banco de dados.</p>
 <div class="kpis">
   <div class="kpi"><span>Compras simuladas</span><strong>${money(tC)}</strong></div>
@@ -2396,7 +2444,7 @@ if ($("#simPrint")) $("#simPrint").onclick = () => {
 </div>
 <table><thead><tr><th>Tipo</th><th>Produto</th><th class="r">Qtd.</th><th class="r">Preço unit.</th><th class="r">Subtotal</th><th class="r">Referência</th><th class="r">Resultado</th></tr></thead>
 <tbody>${linhas}</tbody></table>
-<p class="rodape">Emitido em ${escDoc(dtLocal(new Date().toISOString()))}</p>`);
+`);
 };
 renderSimulacao();
 
